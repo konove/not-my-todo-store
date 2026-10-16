@@ -50,6 +50,16 @@ class StoreTest {
     }
 
     @Test
+    fun `a worktree of a repository with no remote joins its project`() {
+        val repo = TempRepo.create(tmp.resolve("local"))
+        ensure(repo)
+        val worktree = tmp.resolve("local-feature")
+        TempRepo.git(repo, "worktree", "add", "-q", worktree.toString())
+        assertEquals("local", store.resolve(worktree).record!!.key)
+        assertEquals(listOf(repo.toString(), worktree.toString()), store.project("local")!!.checkouts)
+    }
+
+    @Test
     fun `a folder outside git is a project of its own path`() {
         val notes = Files.createDirectories(tmp.resolve("notes"))
         val made = ensure(notes)

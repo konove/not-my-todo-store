@@ -42,6 +42,16 @@ class Git(private val executable: String = "git", private val timeoutMs: Long = 
         return urls.distinct()
     }
 
+    /**
+     * The root of the main worktree when [root] is a linked worktree: the folder that holds the
+     * repository's own .git. Null for the main worktree itself and for a submodule.
+     */
+    fun mainRoot(root: Path): Path? {
+        val dir = gitDir(root) ?: return null
+        if (!Files.isRegularFile(dir.resolve("commondir"))) return null
+        return commonDir(dir).parent
+    }
+
     /** The output of git [args] run in [dir]; null when git is not there, fails or takes too long. */
     fun run(dir: Path, vararg args: String): String? {
         val process = try {

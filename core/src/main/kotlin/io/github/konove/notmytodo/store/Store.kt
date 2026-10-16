@@ -97,7 +97,10 @@ class Store(
         val remotes = repo?.let(git::remotes).orEmpty()
         if (root == null) return Resolution(abs, null, remotes, null)
         val records = projects()
+        // A worktree of a repository with no remote is known by the checkout of its main worktree.
+        val main = repo?.let(git::mainRoot)?.toString()
         val known = records.firstOrNull { root.toString() in it.checkouts }
+            ?: main?.let { m -> records.firstOrNull { m in it.checkouts } }
             ?: records.firstOrNull { r -> remotes.isNotEmpty() && r.remotes.any { it in remotes } }
         return Resolution(abs, root, remotes, known?.let { tidy(it, root) })
     }
