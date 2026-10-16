@@ -471,4 +471,18 @@ class ItemStoreTest {
         assertEquals((1..120).map { "T-$it" }, items.map { it.id })
         assertEquals(setOf("a", "b", "c"), items.map { it.title.substringBefore(' ') }.toSet())
     }
+
+    @Test
+    fun `a store that stands in for a project that could not be opened holds nothing and takes no change`() {
+        val tmp = Files.createTempDirectory("nmt-unavailable")
+        val dir = ProjectDir(tmp.resolve("projects/gone"))
+        val why = "the store is locked by another writer; try again"
+        val s = ItemStore.unavailable(dir, StoreLock(tmp.resolve("store.lock")), why)
+        assertEquals(emptyList<TodoItem>(), s.items)
+        assertEquals(why, s.error)
+        assertEquals(why, assertThrows(StoreException::class.java) { s.create(Draft("x")) }.message)
+        assertEquals(why, assertThrows(StoreException::class.java) { s.batch { it.create(Draft("y")) } }.message)
+        assertFalse(s.reload())
+        assertFalse(Files.exists(dir.path))
+    }
 }

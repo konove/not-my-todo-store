@@ -38,13 +38,15 @@ data class Draft(
  * read again before every change, under the store's [lock], and only the items a change touched are
  * written. A change that is only kept in memory, such as the lines an anchor has moved to, is written
  * when its item is saved for another reason, so that a file does not change with every edit of the
- * code above an anchor. [foreign] finds an item of another project by its qualified id.
+ * code above an anchor. [foreign] finds an item of another project by its qualified id. [refusal]
+ * is set on a store that stands in for a project that could not be opened.
  */
 class ItemStore(
     val dir: ProjectDir,
     private val lock: StoreLock,
     private val foreign: (String) -> TodoItem? = { null },
     private val clock: () -> Instant = Instant::now,
+    private val refusal: String? = null,
 ) {
     val key: String get() = dir.key
     private val listeners = CopyOnWriteArrayList<() -> Unit>()
@@ -65,10 +67,10 @@ class ItemStore(
     }
 
     val items: List<TodoItem>
-        get() = synchronized(this) { if (broken != null) emptyList() else data.items }
+        get() = synchronized(this) { if (broken != null || refusal != null) emptyList() else data.items }
 
     val error: String?
-        get() = synchronized(this) { broken }
+        get() = synchronized(this) { broken ?: refusal }
 
     /** The item files that could not be read. They are left as they are, and their ids are not given out again. */
     val unreadable: List<ProjectDir.Unreadable>
@@ -291,6 +293,7 @@ class ItemStore(
         }
 
     private fun <T> mutate(persist: Boolean = true, block: (TodoFile) -> Pair<TodoFile, T>): T {
+        refusal?.let { throw StoreException(it) }
         var changed = false
         try {
             return lock.withLock {
@@ -326,6 +329,7 @@ class ItemStore(
 
     /** Reads the files if any of them changed since they were last read or written. Returns true if state changed. */
     private fun load(): Boolean {
+        if (refusal != null) return false
         val now = try {
             dir.stamp()
         } catch (e: IOException) {
@@ -387,5 +391,10 @@ class ItemStore(
                 System.getLogger(ItemStore::class.java.name).log(System.Logger.Level.WARNING, "TODO store listener failed", e)
             }
         }
+    }
+
+    companion object {
+        /** A store for a project that could not be opened: it holds nothing, and every change is refused with [why]. */
+        fun unavailable(dir: ProjectDir, lock: StoreLock, why: String): ItemStore = ItemStore(dir, lock, refusal = why)
     }
 }

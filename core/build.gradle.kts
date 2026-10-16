@@ -9,6 +9,11 @@ kotlin {
     jvmToolchain(21)
 }
 
+// The plugin ships this jar beside its own; a jar called core-0.1.0.jar would say nothing there.
+base {
+    archivesName.set("not-my-todo-store-core")
+}
+
 repositories {
     mavenCentral()
 }

@@ -114,12 +114,22 @@ class StoreTest {
     }
 
     @Test
-    fun `a project folder whose project json is broken keeps its key and its file`() {
+    fun `a broken project json of the key a folder would get stops a project being made for it`() {
         val broken = Files.createDirectories(store.root.resolve("projects/api")).resolve("project.json")
         Files.writeString(broken, "{ broken")
-        val made = ensure(TempRepo.create(tmp.resolve("z/api"), "git@github.com:me/api.git"))
-        assertEquals("api-2", made.record.key)
+        val e = assertThrows(StoreException::class.java) { ensure(TempRepo.create(tmp.resolve("z/api"), "git@github.com:me/api.git")) }
+        assertTrue(e.message!!, e.message!!.startsWith("$broken cannot be read ("))
+        assertTrue(e.message!!, e.message!!.endsWith("and it may be the project of ${tmp.resolve("z/api")}. Fix or delete project.json there."))
         assertEquals("{ broken", Files.readString(broken))
+        assertFalse(Files.exists(store.root.resolve("projects/api-2")))
+        assertTrue(store.problem("api")!!, store.problem("api")!!.startsWith("project.json is not valid JSON"))
+        assertNull(store.problem("nothing-here"))
+    }
+
+    @Test
+    fun `a folder with no project json still holds its key`() {
+        Files.createDirectories(store.root.resolve("projects/api"))
+        assertEquals("api-2", ensure(TempRepo.create(tmp.resolve("z/api"), "git@github.com:me/api.git")).record.key)
     }
 
     @Test

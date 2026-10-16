@@ -93,4 +93,10 @@ class ProjectDirTest {
         assertTrue(Files.readString(dir.path.resolve("project.json")).contains("\"colour\": \"red\""))
         assertEquals(5, dir.read().record!!.nextId)
     }
+
+    @Test
+    fun `an item's file is named after its id in the items folder`() {
+        val dir = ProjectDir(Files.createTempDirectory("nmt-dir").resolve("demo"))
+        assertEquals(dir.path.resolve("items").resolve("T-3.json"), dir.itemFile("T-3"))
+    }
 }

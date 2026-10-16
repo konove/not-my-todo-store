@@ -22,6 +22,9 @@ class ProjectDir(val path: Path) {
     private val itemsDir: Path get() = path.resolve("items")
     private val recordFile: Path get() = path.resolve("project.json")
 
+    /** The file item [id] is kept in. */
+    fun itemFile(id: String): Path = itemsDir.resolve("$id.json")
+
     /** An item file that could not be read, and why. It is left as it is. */
     data class Unreadable(val file: String, val problem: String)
 
@@ -99,7 +102,7 @@ class ProjectDir(val path: Path) {
         var recordTemp: Path? = null
         try {
             changed.forEach { item ->
-                val target = itemsDir.resolve("${item.id}.json")
+                val target = itemFile(item.id)
                 pending += temp(target, TodoJson.encodeItemText(item)) to target
             }
             recordTemp = record?.let { temp(recordFile, ProjectJson.encode(it)) }

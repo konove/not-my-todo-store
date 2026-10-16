@@ -71,6 +71,19 @@ class Store(
         }
     }
 
+    /** Why project.json of [key] cannot be read; null when it can, or when there is none. */
+    fun problem(key: String): String? {
+        if (!ItemRef.KEY.matches(key)) return null
+        return try {
+            dir(key).readRecord()
+            null
+        } catch (e: TodoFormatException) {
+            e.message ?: "it is not valid"
+        } catch (e: IOException) {
+            e.message ?: "it cannot be read"
+        }
+    }
+
     fun project(key: String): ProjectRecord? = try {
         if (ItemRef.KEY.matches(key)) dir(key).readRecord() else null
     } catch (_: TodoFormatException) {
@@ -108,12 +121,18 @@ class Store(
     /**
      * The project of [resolution], made now when it has none; inbox for a folder that is never a
      * project. Another process may have made it since [resolution] was found, so it is looked for
-     * again under the lock.
+     * again under the lock. It refuses while the project.json of the key the folder would get
+     * cannot be read.
      */
     fun ensure(resolution: Resolution): Ensured = lock.withLock {
         val root = resolution.root ?: return@withLock Ensured(inbox(), false)
         val again = resolve(resolution.folder)
         again.record?.let { return@withLock Ensured(it, false) }
+        // The project this folder's name would be the key of may be its own, unreadable now: another made beside it would split its items in two.
+        val base = keyFor(root, emptySet())
+        problem(base)?.let {
+            throw StoreException("${dir(base).path.resolve("project.json")} cannot be read ($it), and it may be the project of $root. Fix or delete project.json there.")
+        }
         val key = keyFor(root, folderNames())
         val record = ProjectRecord(key, again.remotes, listOf(root.toString()))
         dir(key).writeRecord(record)

@@ -1,6 +1,8 @@
 package io.github.konove.notmytodo.store
 
 import io.github.konove.notmytodo.model.Status
+import io.github.konove.notmytodo.model.TodoItem
+import io.github.konove.notmytodo.model.TodoJson
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -60,5 +62,28 @@ class ImportTest {
         assertEquals(ImportResult.Clash(listOf("T-5")), Import.run(store, "demo", file))
         assertEquals("{ hand-edited", Files.readString(items.resolve("T-5.json")))
         assertNull(store.project("demo")!!.importedFrom)
+    }
+
+    @Test
+    fun `an import that stopped before it recorded the file is finished when run again`() {
+        // What a first run leaves when it stops between writing the items and recording the file.
+        store.items("demo").batch { b -> TodoJson.decode(Files.readString(file)).items.forEach(b::put) }
+        assertEquals(ImportResult.Imported(2), Import.run(store, "demo", file))
+        assertEquals(listOf("T-2", "T-5"), store.items("demo").items.map { it.id })
+        assertEquals(file.toAbsolutePath().normalize().toString(), store.project("demo")!!.importedFrom!!.path)
+        assertEquals(Import.sha256(Files.readAllBytes(file)), store.project("demo")!!.importedFrom!!.sha256)
+    }
+
+    @Test
+    fun `an item already there that differs from the file's is still a clash`() {
+        store.items("demo").batch { b -> b.put(TodoItem(id = "T-2", title = "another two")) }
+        assertEquals(ImportResult.Clash(listOf("T-2")), Import.run(store, "demo", file))
+        assertNull(store.project("demo")!!.importedFrom)
+    }
+
+    @Test
+    fun `adjust changes each item before it is written`() {
+        Import.run(store, "demo", file, adjust = { it.copy(title = it.title.uppercase()) })
+        assertEquals(listOf("TWO", "FIVE"), store.items("demo").items.map { it.title })
     }
 }
