@@ -216,5 +216,25 @@ object TodoToolSpecs {
                 Param("project", ParamType.STRING, PROJECT),
             ),
         ) { a -> tools.delete(a.required("id"), a.string("project")) },
+        Tool(
+            "todo_projects",
+            "List the projects of this machine: each repository with items, and inbox, which holds items that belong to no repository. " +
+                "Gives each project's key, whether it is the current one, its remotes, its checkouts on this machine, and how many of its " +
+                "items are open, wait for the user's decision and are fixed. Use a key as project in the other tools, or in an id written key/T-12.",
+            emptyList(),
+        ) { tools.projects() },
+        Tool(
+            "todo_move",
+            "Move a TODO item to another project, typically from inbox into the repository it turned out to belong to. It gets the next id " +
+                "there and keeps where it came from in movedFrom; every link to it, in any project, is rewritten. Its anchors are dropped, " +
+                "since they were relative to the other checkout: attach it again with todo_update. A part cannot be moved on its own, and an item " +
+                "with parts moves only with withParts=true. Returns moved, each old qualified id with its new one.",
+            listOf(
+                Param("id", ParamType.STRING, "Item id, for example inbox/T-4, or T-4 in the project given by project", required = true),
+                Param("to", ParamType.STRING, "Project to move it to: its key, inbox, or a folder", required = true),
+                Param("withParts", ParamType.BOOLEAN, "true to move an item that has parts together with them"),
+                Param("project", ParamType.STRING, PROJECT),
+            ),
+        ) { a -> tools.move(a.required("id"), a.required("to"), a.bool("withParts"), a.string("project")) },
     )
 }

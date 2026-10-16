@@ -20,6 +20,8 @@ import io.github.konove.notmytodo.model.TodoJson
 import io.github.konove.notmytodo.store.Draft
 import io.github.konove.notmytodo.store.ItemStore
 import io.github.konove.notmytodo.store.StoreException
+import java.nio.file.Files
+import java.nio.file.Path
 
 /** Every list filter of todo_list, as the tool takes them. */
 data class ListFilter(
@@ -37,8 +39,56 @@ class TodoTools(val workspace: Workspace) {
         project: String? = null,
     ): String {
         val filter = ListFilter(status, tags, priority, path, withoutTags, text, compact, lost, blocked, parent, effort, anyText)
-        val scope = found { workspace.scope(project) } ?: return "[]"
-        return Call(scope, workspace).list(filter)
+        val star = project?.trim() == "*"
+        val scope = if (star) null else found { workspace.scope(project) }
+        if (scope != null) return Call(scope, workspace).list(filter)
+        if (!star && project != null) return "[]"
+        // Every project: asked for with *, or the folder this session runs in has none.
+        val rows = found { workspace.store.projects() }.flatMap { record ->
+            val call = Call(found { workspace.scopeOf(record) }, workspace)
+            val (items, links) = call.select(filter)
+            call.render(items, links, filter.compact, qualify = true)
+        }
+        return if (filter.compact) rows.joinToString(",\n", "[\n", "\n]").takeIf { rows.isNotEmpty() } ?: "[]"
+        else TodoJson.toText(JsonArray().also { a -> rows.forEach(a::add) })
+    }
+
+    /** The projects of this machine, with the counts that say where there is work. */
+    fun projects(): String {
+        val here = found { workspace.here() }.record?.key
+        val rows = found { workspace.store.projects() }.map { record ->
+            val items = workspace.store.items(record.key).items
+            JsonObject().apply {
+                addProperty("key", record.key)
+                if (record.key == here) addProperty("current", true)
+                add("remotes", JsonArray().also { a -> record.remotes.forEach(a::add) })
+                add("checkouts", JsonArray().also { a -> record.checkouts.filter { Files.isDirectory(Path.of(it)) }.forEach(a::add) })
+                addProperty("open", items.count { it.status == Status.OPEN || it.status == Status.IN_PROGRESS })
+                addProperty("needsDecision", items.count { it.needsDecision && !it.isClosed })
+                addProperty("fixed", items.count { it.status == Status.FIXED })
+            }
+        }
+        return if (rows.isEmpty()) "[]" else rows.joinToString(",\n", "[\n", "\n]") { it.toString() }
+    }
+
+    fun move(id: String, to: String, withParts: Boolean = false, project: String? = null): String {
+        val (scope, bare) = found { workspace.target(id, project) }
+        val target = (found { workspace.scope(to) } ?: throw ToolError("$to has no project yet: create an item there first")).key
+        val moved = try {
+            workspace.store.move(scope.key, bare, target, withParts)
+        } catch (e: StoreException) {
+            throw ToolError(e.message ?: "the item could not be moved")
+        }
+        return JsonObject().apply {
+            add("moved", JsonObject().also { o -> moved.ids.forEach { (old, new) -> o.addProperty("${scope.key}/$old", "$target/$new") } })
+            if (moved.anchorsDropped > 0) {
+                addProperty(
+                    "anchorsDropped",
+                    "${moved.anchorsDropped} anchor(s) dropped: they were relative to the checkout of ${scope.key}. " +
+                        "Attach the item again with todo_update path and startLine.",
+                )
+            }
+        }.toString()
     }
 
     fun get(id: String, full: Boolean = false, project: String? = null): String =
@@ -99,7 +149,7 @@ class TodoTools(val workspace: Workspace) {
 private class Call(private val scope: Scope, private val workspace: Workspace) {
     private val store get() = scope.items
 
-    fun list(filter: ListFilter): String {
+    fun select(filter: ListFilter): Pair<List<TodoItem>, Links> {
         // Parents are stored bare, so the project's own key is taken off.
         val partOf = filter.parent?.takeIf { it.isNotBlank() }?.let { parseRef(it).storedFrom(scope.key) }
         val statuses = words(filter.status).map(::parseStatus)
@@ -123,12 +173,35 @@ private class Call(private val scope: Scope, private val workspace: Workspace) {
                 (partOf == null || item.parent == partOf) &&
                 needles.all { item.says(it) } && (anyOf.isEmpty() || anyOf.any { item.says(it) })
         }
+        return found to links
+    }
+
+    fun list(filter: ListFilter): String {
+        val (found, links) = select(filter)
+        val rows = render(found, links, filter.compact, qualify = false)
         // One item per line: pretty printing would triple the size of a list that is meant to be read whole.
-        if (filter.compact) return rows(found.map { compactRow(it, links) })
-        fixes(found)
-        val array = JsonArray()
-        found.forEach { array.add(summary(it, links)) }
-        return TodoJson.toText(array)
+        if (filter.compact) return rows(rows)
+        return TodoJson.toText(JsonArray().also { a -> rows.forEach(a::add) })
+    }
+
+    fun render(found: List<TodoItem>, links: Links, compact: Boolean, qualify: Boolean): List<JsonObject> {
+        if (!compact) fixes(found)
+        return found.map { item ->
+            val row = if (compact) compactRow(item, links) else summary(item, links)
+            if (qualify) qualified(row) else row
+        }
+    }
+
+    /** [row] as it reads among the items of every project: with its project, and every id qualified. */
+    private fun qualified(row: JsonObject): JsonObject {
+        fun q(id: String) = ItemRef.parse(id)?.let { if (it.project == null) "${scope.key}/${it.id}" else it.toString() } ?: id
+        row.addProperty("project", scope.key)
+        for (field in listOf("id", "duplicateOf", "parent")) row.get(field)?.takeIf { it.isJsonPrimitive }?.let { row.addProperty(field, q(it.asString)) }
+        row.get("blockedBy")?.let { b ->
+            if (b.isJsonArray) row.add("blockedBy", JsonArray().also { a -> b.asJsonArray.forEach { a.add(q(it.asString)) } })
+            else row.addProperty("blockedBy", b.asString.split(" ").joinToString(" ", transform = ::q))
+        }
+        return row
     }
 
     fun get(id: String, full: Boolean = false): String {

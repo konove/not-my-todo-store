@@ -23,14 +23,14 @@ class ServerTest {
         call(id, "tools/call", """{"name":"$name","arguments":$arguments}""").getAsJsonArray("content")[0].asJsonObject.get("text").asString
 
     @Test
-    fun `the instructions name the folder, and the eight tools are listed with project`() {
+    fun `the instructions name the folder, and the ten tools are listed with project`() {
         assertTrue(call(1, "initialize").get("instructions").asString.contains("shop"))
         val tools = call(2, "tools/list").getAsJsonArray("tools").map { it.asJsonObject }
         assertEquals(
-            listOf("todo_list", "todo_get", "todo_create", "todo_update", "todo_comment", "todo_batch", "todo_decided", "todo_delete"),
-            tools.map { it.get("name").asString }.take(8),
+            listOf("todo_list", "todo_get", "todo_create", "todo_update", "todo_comment", "todo_batch", "todo_decided", "todo_delete", "todo_projects", "todo_move"),
+            tools.map { it.get("name").asString }.take(10),
         )
-        tools.forEach { assertTrue(it.getAsJsonObject("inputSchema").getAsJsonObject("properties").has("project")) }
+        tools.filter { it.get("name").asString != "todo_projects" }.forEach { assertTrue(it.getAsJsonObject("inputSchema").getAsJsonObject("properties").has("project")) }
         assertEquals("array", tools[5].getAsJsonObject("inputSchema").getAsJsonObject("properties").getAsJsonObject("items").get("type").asString)
     }
 

@@ -1019,8 +1019,8 @@ class TodoToolsTest {
         inHome.create("an idea", null, null, null, null, null, null)
         inHome.update("T-1", "a better idea", null, null, null, null)
         assertEquals("a better idea", JsonParser.parseString(inHome.get("T-1")).asJsonObject.get("title").asString)
-        // A list from the home folder is not the inbox's.
-        assertEquals("[]", inHome.list())
+        // The home folder has no project, so its list is every project's, the inbox included.
+        assertEquals("inbox/T-1", JsonParser.parseString(inHome.list()).asJsonArray[0].asJsonObject.get("id").asString)
     }
 
     @Test
