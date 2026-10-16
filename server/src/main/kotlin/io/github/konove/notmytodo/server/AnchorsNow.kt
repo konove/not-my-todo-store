@@ -3,6 +3,7 @@ package io.github.konove.notmytodo.server
 import io.github.konove.notmytodo.anchor.AnchorResolver
 import io.github.konove.notmytodo.model.TodoItem
 import java.io.IOException
+import java.nio.file.InvalidPathException
 import java.nio.file.Files
 import java.nio.file.Path
 
@@ -24,10 +25,17 @@ object AnchorsNow {
         return if (anchors == item.anchors) item else item.copy(anchors = anchors)
     }
 
-    /** The text of [path] in [checkout]; null when there is no such file, or it is not inside the checkout. */
+    /**
+     * The text of [path] in [checkout]; null when there is no such file, or it is not inside the
+     * checkout. An absolute path is refused even when it leads inside: anchors are relative to the checkout.
+     */
     fun read(checkout: Path?, path: String): String? {
-        if (checkout == null) return null
-        val file = checkout.resolve(path).normalize()
+        if (checkout == null || path.startsWith('/') || path.startsWith('\\')) return null
+        val file = try {
+            Path.of(path).takeUnless { it.isAbsolute }?.let { checkout.resolve(it).normalize() }
+        } catch (_: InvalidPathException) {
+            null
+        } ?: return null
         if (!file.startsWith(checkout) || !Files.isRegularFile(file)) return null
         return try {
             // A link inside the checkout may lead out of it.

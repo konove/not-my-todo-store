@@ -1039,4 +1039,25 @@ class TodoToolsTest {
         failsWith("not found") { tools.create("x", null, null, null, "link.txt", 1, 1) }
         assertEquals(0, store.items.size)
     }
+
+    @Test
+    fun `an absolute path that leads inside the checkout is refused`() {
+        write("a.txt")
+        failsWith("not found") { tools.create("x", null, null, null, repo.resolve("a.txt").toString(), 1, 1) }
+        assertEquals(0, store.items.size)
+    }
+
+    @Test
+    fun `a path is stored relative to the checkout with its dots worked out`() {
+        write("a.txt")
+        tools.create("x", null, null, null, "x/../a.txt", 2, 2)
+        assertEquals("a.txt", store.find("T-1")!!.anchor!!.path)
+    }
+
+    @Test
+    fun `a store that fails while the project is found is told as a tool error`() {
+        Files.createDirectories(tmp.resolve("store/projects/inbox"))
+        Files.writeString(tmp.resolve("store/projects/inbox/project.json"), "{ broken")
+        failsWith("project.json") { TodoTools(Workspace(stores, home)).create("x", null, null, null, null, null, null) }
+    }
 }

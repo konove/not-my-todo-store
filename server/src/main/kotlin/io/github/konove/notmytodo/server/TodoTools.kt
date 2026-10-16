@@ -37,12 +37,12 @@ class TodoTools(val workspace: Workspace) {
         project: String? = null,
     ): String {
         val filter = ListFilter(status, tags, priority, path, withoutTags, text, compact, lost, blocked, parent, effort, anyText)
-        val scope = workspace.scope(project) ?: return "[]"
+        val scope = found { workspace.scope(project) } ?: return "[]"
         return Call(scope, workspace).list(filter)
     }
 
     fun get(id: String, full: Boolean = false, project: String? = null): String =
-        workspace.target(id, project).let { (scope, bare) -> Call(scope, workspace).get(bare, full) }
+        found { workspace.target(id, project) }.let { (scope, bare) -> Call(scope, workspace).get(bare, full) }
 
     fun create(
         title: String, details: String?, priority: String?, tags: String?,
@@ -50,7 +50,7 @@ class TodoTools(val workspace: Workspace) {
         blockedBy: String? = null, duplicateOf: String? = null, parent: String? = null, source: String? = null,
         toDecide: String? = null, effort: String? = null, full: Boolean = false, project: String? = null,
     ): String {
-        val scope = workspace.scope(project, create = true)!!
+        val scope = found { workspace.scope(project, create = true)!! }
         val reply = Call(scope, workspace).create(title, details, priority, tags, path, startLine, endLine, places, blockedBy, duplicateOf, parent, source, toDecide, effort, full)
         return scope.notice?.let { notice -> noted(reply, notice) } ?: reply
     }
@@ -61,24 +61,31 @@ class TodoTools(val workspace: Workspace) {
         blockedBy: String? = null, duplicateOf: String? = null, parent: String? = null,
         source: String? = null, fixedIn: String? = null, resolution: String? = null, toDecide: String? = null,
         effort: String? = null, full: Boolean = false, project: String? = null,
-    ): String = workspace.target(id, project).let { (scope, bare) ->
+    ): String = found { workspace.target(id, project) }.let { (scope, bare) ->
         Call(scope, workspace).update(bare, title, details, priority, tags, status, path, startLine, endLine, places, blockedBy, duplicateOf, parent, source, fixedIn, resolution, toDecide, effort, full)
     }
 
     fun batch(items: String, project: String? = null): String {
-        val scope = workspace.scope(project, create = true)!!
+        val scope = found { workspace.scope(project, create = true)!! }
         val reply = Call(scope, workspace).batch(items)
         return scope.notice?.let { "$it\n$reply" } ?: reply
     }
 
     fun comment(id: String, text: String, full: Boolean = false, project: String? = null): String =
-        workspace.target(id, project).let { (scope, bare) -> Call(scope, workspace).comment(bare, text, full) }
+        found { workspace.target(id, project) }.let { (scope, bare) -> Call(scope, workspace).comment(bare, text, full) }
 
     fun delete(id: String, project: String? = null): String =
-        workspace.target(id, project).let { (scope, bare) -> Call(scope, workspace).delete(bare) }
+        found { workspace.target(id, project) }.let { (scope, bare) -> Call(scope, workspace).delete(bare) }
 
     fun decided(id: String, decisions: String, full: Boolean = false, project: String? = null): String =
-        workspace.target(id, project).let { (scope, bare) -> Call(scope, workspace).decided(bare, decisions, full) }
+        found { workspace.target(id, project) }.let { (scope, bare) -> Call(scope, workspace).decided(bare, decisions, full) }
+
+    /** Finds the project of a call. The store may fail to, for one when another writer holds its lock, and the agent is told why. */
+    private fun <T> found(block: () -> T): T = try {
+        block()
+    } catch (e: StoreException) {
+        throw ToolError(e.message ?: "the project cannot be found")
+    }
 
     /** [reply], one JSON object, with [notice] added to it; a full item is JSON as well. */
     private fun noted(reply: String, notice: String): String {
@@ -625,8 +632,23 @@ private class Call(private val scope: Scope, private val workspace: Workspace) {
     private fun isUnder(file: String, directory: String): Boolean =
         directory.isEmpty() || file == directory || file.startsWith("$directory/")
 
-    /** A file as anchors spell it: forward slashes, relative to the project root. */
-    private fun filePath(path: String): String = path.trim().replace('\\', '/').removePrefix("./")
+    /**
+     * A file as anchors spell it: forward slashes, relative to the project root, with `.` and `..` worked
+     * out. An absolute path is left as it is, for the read to refuse; so is a `..` that leads out.
+     */
+    private fun filePath(path: String): String {
+        val slashed = path.trim().replace('\\', '/')
+        if (slashed.startsWith("/")) return slashed
+        val parts = ArrayList<String>()
+        for (part in slashed.split('/')) {
+            when {
+                part.isEmpty() || part == "." -> {}
+                part == ".." && parts.isNotEmpty() && parts.last() != ".." -> parts.removeAt(parts.lastIndex)
+                else -> parts += part
+            }
+        }
+        return parts.joinToString("/")
+    }
 
     private fun item(id: String): TodoItem =
         readable().firstOrNull { it.id == id } ?: throw ToolError("there is no item with id $id")
