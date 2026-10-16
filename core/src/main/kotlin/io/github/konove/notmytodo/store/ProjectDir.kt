@@ -6,6 +6,7 @@ import io.github.konove.notmytodo.model.TodoJson
 import java.io.IOException
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
+import java.nio.file.NoSuchFileException
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.nio.file.attribute.BasicFileAttributes
@@ -30,15 +31,27 @@ class ProjectDir(val path: Path) {
      * Changes whenever a file of the project is written, added or removed. The file key is in it
      * because a rename puts a new file in place, which two writes in the same instant would not show.
      */
-    fun stamp(): String = (listOf(recordFile) + itemFiles()).filter(Files::exists).joinToString("|") {
-        val attributes = Files.readAttributes(it, BasicFileAttributes::class.java)
-        "${it.fileName}:${attributes.lastModifiedTime().to(TimeUnit.NANOSECONDS)}:${attributes.size()}:${attributes.fileKey()}"
-    }
+    fun stamp(): String = (listOf(recordFile) + itemFiles()).mapNotNull { file ->
+        try {
+            val attributes = Files.readAttributes(file, BasicFileAttributes::class.java)
+            "${file.fileName}:${attributes.lastModifiedTime().to(TimeUnit.NANOSECONDS)}:${attributes.size()}:${attributes.fileKey()}"
+        } catch (_: NoSuchFileException) {
+            null
+        }
+    }.joinToString("|")
 
-    /** What project.json says; null when there is none. Throws [TodoFormatException] when it is not valid. */
+    /**
+     * What project.json says; null when there is none. Readers take no lock, so a file a writer
+     * removed after it was found counts as none. Throws [TodoFormatException] when it is not valid.
+     */
     fun readRecord(): ProjectRecord? {
         if (!Files.isRegularFile(recordFile)) return null
-        return ProjectJson.decode(Files.readString(recordFile), key)
+        val text = try {
+            Files.readString(recordFile)
+        } catch (_: NoSuchFileException) {
+            return null
+        }
+        return ProjectJson.decode(text, key)
     }
 
     fun read(): Snapshot {
@@ -51,6 +64,8 @@ class ProjectDir(val path: Path) {
                 val item = TodoJson.decodeItemText(Files.readString(file), name)
                 if (name == "${item.id}.json") items += item
                 else unreadable += Unreadable(name, "holds item ${item.id}, not ${name.removeSuffix(".json")}")
+            } catch (_: NoSuchFileException) {
+                // Removed by a writer after it was listed: it is gone, not broken.
             } catch (e: TodoFormatException) {
                 unreadable += Unreadable(name, e.message ?: "not valid")
             } catch (e: IOException) {
@@ -60,28 +75,48 @@ class ProjectDir(val path: Path) {
         return Snapshot(record, items.sortedBy { it.number }, unreadable)
     }
 
-    fun writeRecord(record: ProjectRecord) {
-        guarded { move(temp(recordFile, ProjectJson.encode(record)), recordFile) }
+    fun writeRecord(record: ProjectRecord) = guarded {
+        val temp = temp(recordFile, ProjectJson.encode(record))
+        try {
+            move(temp, recordFile)
+        } finally {
+            discard(temp)
+        }
     }
 
     /**
      * Writes the items of [after] that differ from [before], removes those that [before] has and
      * [after] has not, and then writes [record] unless it is null. Every new file is written before
-     * the first is renamed into place.
+     * the first is renamed into place. If anything fails, the temporary files not yet renamed are
+     * removed, so the folder keeps only what was there before.
      */
     fun write(record: ProjectRecord?, before: List<TodoItem>, after: List<TodoItem>) = guarded {
         val old = before.associateBy { it.id }
         val changed = after.filter { old[it.id] != it }
         val gone = old.keys - after.map { it.id }.toSet()
         Files.createDirectories(itemsDir)
-        val temps = changed.map { item ->
-            val target = itemsDir.resolve("${item.id}.json")
-            temp(target, TodoJson.encodeItemText(item)) to target
+        val pending = ArrayList<Pair<Path, Path>>()
+        var recordTemp: Path? = null
+        try {
+            changed.forEach { item ->
+                val target = itemsDir.resolve("${item.id}.json")
+                pending += temp(target, TodoJson.encodeItemText(item)) to target
+            }
+            recordTemp = record?.let { temp(recordFile, ProjectJson.encode(it)) }
+            while (pending.isNotEmpty()) {
+                val (temp, target) = pending.first()
+                move(temp, target)
+                pending.removeAt(0)
+            }
+            gone.forEach { Files.deleteIfExists(itemsDir.resolve("$it.json")) }
+            recordTemp?.let {
+                move(it, recordFile)
+                recordTemp = null
+            }
+        } finally {
+            pending.forEach { (temp, _) -> discard(temp) }
+            recordTemp?.let(::discard)
         }
-        val recordTemp = record?.let { temp(recordFile, ProjectJson.encode(it)) }
-        temps.forEach { (temp, target) -> move(temp, target) }
-        gone.forEach { Files.deleteIfExists(itemsDir.resolve("$it.json")) }
-        recordTemp?.let { move(it, recordFile) }
     }
 
     private fun itemFiles(): List<Path> =
@@ -91,8 +126,24 @@ class ProjectDir(val path: Path) {
     private fun temp(target: Path, text: String): Path {
         Files.createDirectories(target.parent)
         val temp = Files.createTempFile(target.parent, target.fileName.toString() + ".", ".tmp")
-        Files.writeString(temp, text)
+        try {
+            Files.writeString(temp, text)
+        } catch (e: IOException) {
+            discard(temp)
+            throw e
+        }
         return temp
+    }
+
+    /**
+     * Removes a temporary file that was not renamed into place. The failure being reported is the
+     * write's own, so a failure to remove the leftover is not raised over it.
+     */
+    private fun discard(temp: Path) {
+        try {
+            Files.deleteIfExists(temp)
+        } catch (_: IOException) {
+        }
     }
 
     private fun move(from: Path, to: Path) {

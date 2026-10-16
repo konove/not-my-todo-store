@@ -69,6 +69,22 @@ class ProjectDirTest {
     }
 
     @Test
+    fun `a write that fails leaves no temporary file behind`() {
+        val a = TodoItem("T-1", "a")
+        dir.write(ProjectRecord("demo", nextId = 2), emptyList(), listOf(a))
+        Files.createDirectories(file("T-2.json"))
+        Files.writeString(file("T-2.json").resolve("blocker"), "x")
+        assertThrows(StoreException::class.java) {
+            dir.write(ProjectRecord("demo", nextId = 3), listOf(a), listOf(a, TodoItem("T-2", "b")))
+        }
+        assertEquals(emptyList<String>(), tempFiles(dir.path))
+        assertEquals(emptyList<String>(), tempFiles(dir.path.resolve("items")))
+    }
+
+    private fun tempFiles(folder: java.nio.file.Path): List<String> =
+        Files.list(folder).use { s -> s.map { it.fileName.toString() }.filter { it.endsWith(".tmp") }.toList() }
+
+    @Test
     fun `unknown fields of the project file are kept`() {
         Files.createDirectories(dir.path)
         Files.writeString(dir.path.resolve("project.json"), """{"version":1,"key":"demo","nextId":4,"colour":"red"}""")
