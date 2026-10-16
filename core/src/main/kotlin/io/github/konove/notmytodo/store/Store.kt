@@ -1,5 +1,6 @@
 package io.github.konove.notmytodo.store
 
+import io.github.konove.notmytodo.model.ItemId
 import io.github.konove.notmytodo.model.ItemRef
 import io.github.konove.notmytodo.model.TodoFormatException
 import io.github.konove.notmytodo.model.TodoItem
@@ -14,6 +15,9 @@ import java.util.concurrent.ConcurrentHashMap
  * and its project when it has one. [root] is null for a folder that is never a project.
  */
 data class Resolution(val folder: Path, val root: Path?, val remotes: List<String>, val record: ProjectRecord?)
+
+/** What a move did: the old id of each item moved and its new one, and how many anchors were dropped. */
+data class Moved(val ids: Map<String, String>, val anchorsDropped: Int)
 
 /**
  * The store of one machine: a folder of projects, each with its items. Every write goes through
@@ -146,6 +150,96 @@ class Store(
         )
         if (changed(record) == record) return record
         return updateRecord(record.key, ::changed)
+    }
+
+    /**
+     * Moves item [id] of project [from] to project [to], with its parts when [withParts]. The items
+     * get the next ids there and keep where they came from in movedFrom. Every link to them, in any
+     * project, is rewritten. Their anchors are dropped: they were relative to the other project's checkout.
+     */
+    fun move(from: String, id: String, to: String, withParts: Boolean = false): Moved = lock.withLock {
+        if (from == to) throw StoreException("$from/$id is already in $to")
+        if (project(to) == null) throw StoreException("there is no project $to")
+        val source = items(from)
+        val item = source.find(id) ?: throw StoreException("there is no item with id $from/$id")
+        item.parent?.let {
+            throw StoreException("$from/$id is a part of $it: move $it with withParts, or take $id out of it first (parent \"\")")
+        }
+        val parts = source.items.filter { it.parent == id }
+        if (parts.isNotEmpty() && !withParts) {
+            throw StoreException("$from/$id has parts (${parts.joinToString(", ") { it.id }}): pass withParts to move them with it")
+        }
+        val moving = listOf(item) + parts
+        val target = items(to)
+        val ids = moving.mapIndexed { i, it -> it.id to ItemId.of(target.nextId + i) }.toMap()
+
+        /** [ref], written on an item of project [was], as it is written on an item of project [now] after the move. */
+        fun rewrite(ref: String, was: String, now: String): String {
+            val r = ItemRef.parse(ref) ?: return ref
+            val key = r.project ?: was
+            val moved = if (key == from && r.id in ids) ItemRef(to, ids.getValue(r.id)) else ItemRef(key, r.id)
+            return moved.storedFrom(now)
+        }
+        fun relinked(i: TodoItem, was: String, now: String) = i.copy(
+            blockedBy = i.blockedBy.map { rewrite(it, was, now) },
+            duplicateOf = i.duplicateOf?.let { rewrite(it, was, now) },
+            parent = i.parent?.let { rewrite(it, was, now) },
+        )
+        fun relink(key: String, skip: Set<String> = emptySet()) {
+            val store = items(key)
+            val changes = store.items.filter { it.id !in skip }.mapNotNull { i -> relinked(i, key, key).takeIf { it != i } }
+            if (changes.isNotEmpty()) store.batch { b -> changes.forEach { c -> b.update(c.id, touch = false) { c } } }
+        }
+
+        val brought = moving.map {
+            relinked(it, from, to).copy(id = ids.getValue(it.id), anchors = emptyList(), movedFrom = "$from/${it.id}")
+        }
+        // The new items are written first, so that every rewritten link leads to an item that is there.
+        target.batch { b -> brought.forEach(b::put) }
+        relink(to, brought.map { it.id }.toSet())
+        source.batch { b ->
+            source.items.filter { it.id !in ids }.forEach { i ->
+                relinked(i, from, from).takeIf { it != i }?.let { c -> b.update(i.id, touch = false) { c } }
+            }
+            ids.keys.forEach { b.remove(it) }
+        }
+        projects().map { it.key }.filter { it != from && it != to }.forEach { relink(it) }
+        Moved(ids, moving.sumOf { it.anchors.size })
+    }
+
+    /** Renames project [old] to [new], and every qualified id that names it in every project. */
+    fun rename(old: String, new: String): ProjectRecord = lock.withLock {
+        val key = new.trim().lowercase()
+        if (old == INBOX) throw StoreException("inbox cannot be renamed")
+        if (!ItemRef.KEY.matches(key) || key == INBOX) {
+            throw StoreException("\"$new\" cannot be a project key: use lower-case letters, digits, '.', '-' and '_'")
+        }
+        val record = project(old) ?: throw StoreException("there is no project $old")
+        if (record.version > ProjectJson.VERSION) {
+            throw StoreException("$old was written by a newer version of not-my-todo-store (layout ${record.version}): it can be read but not changed")
+        }
+        if (key == old) return@withLock record
+        if (Files.exists(dir(key).path)) throw StoreException("there already is a project $key")
+        try {
+            Files.move(dir(old).path, dir(key).path)
+        } catch (e: IOException) {
+            throw StoreException("$old cannot be renamed: ${e.message}")
+        }
+        open.remove(old)
+        val renamed = record.copy(key = key)
+        dir(key).writeRecord(renamed)
+        fun renamedRef(ref: String): String {
+            val r = ItemRef.parse(ref) ?: return ref
+            return if (r.project == old) ItemRef(key, r.id).toString() else ref
+        }
+        for (other in projects().map { it.key }) {
+            val store = items(other)
+            val changes = store.items.mapNotNull { i ->
+                i.copy(blockedBy = i.blockedBy.map(::renamedRef), duplicateOf = i.duplicateOf?.let(::renamedRef)).takeIf { it != i }
+            }
+            if (changes.isNotEmpty()) store.batch { b -> changes.forEach { c -> b.update(c.id, touch = false) { c } } }
+        }
+        renamed
     }
 
     companion object {

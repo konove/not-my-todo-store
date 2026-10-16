@@ -23,7 +23,7 @@ object TodoJson {
     private val itemKeys = setOf(
         "id", "title", "details", "priority", "tags", "status", "author", "created", "updated", "comments", "anchor", "anchors",
         "blockedBy", "duplicateOf", "parent", "source", "fixedIn", "resolution",
-        "toDecide", "decisions", "effort",
+        "toDecide", "decisions", "effort", "movedFrom",
     )
     private val decisionKeys = setOf("question", "options", "answer", "time")
     private val commentKeys = setOf("author", "time", "text")
@@ -77,6 +77,7 @@ object TodoJson {
         item.fixedIn?.let { o.addProperty("fixedIn", it) }
         item.resolution?.let { o.addProperty("resolution", it) }
         item.toDecide?.let { o.addProperty("toDecide", it) }
+        item.movedFrom?.let { o.addProperty("movedFrom", it) }
         if (item.decisions.isNotEmpty()) {
             val decisions = JsonArray()
             item.decisions.forEach { d ->
@@ -180,6 +181,7 @@ object TodoJson {
             duplicateOf = o.str("duplicateOf")?.let(ItemRef::normalize), parent = o.str("parent")?.let(ItemRef::normalize),
             source = o.text("source"), fixedIn = o.text("fixedIn"), resolution = o.text("resolution"),
             toDecide = o.text("toDecide"), decisions = decisions, effort = effort,
+            movedFrom = o.text("movedFrom"),
             unknown = o.unknown(itemKeys),
         )
     }

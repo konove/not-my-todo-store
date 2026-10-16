@@ -131,6 +131,8 @@ data class TodoItem(
     val toDecide: String? = null,
     /** What I was asked and what I answered, oldest first. Only ever added to, like [comments]. */
     val decisions: List<Decision> = emptyList(),
+    /** The qualified id the item had in the project it was moved from. */
+    val movedFrom: String? = null,
     /** The JSON fields this version does not know, written back as they came. */
     val unknown: Map<String, JsonElement> = emptyMap(),
 ) {
