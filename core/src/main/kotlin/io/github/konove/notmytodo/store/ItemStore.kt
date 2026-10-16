@@ -57,6 +57,9 @@ class ItemStore(
     private var bad: List<ProjectDir.Unreadable> = emptyList()
     private var stamp: String? = null
 
+    /** Whether a project.json was ever read here: a project that had one and has none is gone, not new. */
+    private var known = false
+
     init {
         synchronized(this) { load() }
     }
@@ -125,6 +128,16 @@ class ItemStore(
             if (file.items.any { it.id == item.id }) throw StoreException("there already is an item with id ${item.id}")
             if (bad.any { it.file == "${item.id}.json" }) throw StoreException("${item.id}.json cannot be read and is left as it is")
             file = file.copy(nextId = maxOf(file.nextId, item.number + 1), items = (file.items + item).sortedBy { it.number })
+        }
+
+        /**
+         * Puts [item] in place of the item with its id exactly as given: its links are not checked,
+         * nothing is normalised and its updated time stays. For rewriting links that only name an
+         * item differently, where a link that was already dangling must stay as it was.
+         */
+        fun replace(item: TodoItem) {
+            if (file.items.none { it.id == item.id }) throw StoreException("there is no item with id ${item.id}")
+            file = file.copy(items = file.items.map { if (it.id == item.id) item else it })
         }
 
         /** Takes item [id] out and leaves the links to it as they are: for items taken elsewhere. */
@@ -284,6 +297,7 @@ class ItemStore(
                 synchronized(this) {
                     changed = load()
                     broken?.let { throw StoreException("${dir.path} cannot be read: $it") }
+                    if (known && record == null) throw StoreException("$key is gone: it was renamed or deleted")
                     record?.takeIf { it.version > ProjectJson.VERSION }?.let {
                         throw StoreException(
                             "${dir.path} was written by a newer version of not-my-todo-store (layout ${it.version}): it can be read but not changed"
@@ -336,6 +350,7 @@ class ItemStore(
         data = read.copy(items = read.items.map { if (was[it.id] == it) live[it.id] ?: it else it })
         saved = read
         record = snapshot.record
+        if (record != null) known = true
         bad = snapshot.unreadable
         broken = null
         return Triple(data, bad, broken) != before

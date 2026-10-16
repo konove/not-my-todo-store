@@ -156,6 +156,7 @@ class Store(
      * Moves item [id] of project [from] to project [to], with its parts when [withParts]. The items
      * get the next ids there and keep where they came from in movedFrom. Every link to them, in any
      * project, is rewritten. Their anchors are dropped: they were relative to the other project's checkout.
+     * Everything is worked out and checked before the first write, so a move that cannot be made changes nothing.
      */
     fun move(from: String, id: String, to: String, withParts: Boolean = false): Moved = lock.withLock {
         if (from == to) throw StoreException("$from/$id is already in $to")
@@ -185,29 +186,73 @@ class Store(
             duplicateOf = i.duplicateOf?.let { rewrite(it, was, now) },
             parent = i.parent?.let { rewrite(it, was, now) },
         )
-        fun relink(key: String, skip: Set<String> = emptySet()) {
-            val store = items(key)
-            val changes = store.items.filter { it.id !in skip }.mapNotNull { i -> relinked(i, key, key).takeIf { it != i } }
-            if (changes.isNotEmpty()) store.batch { b -> changes.forEach { c -> b.update(c.id, touch = false) { c } } }
-        }
+        fun changes(key: String, skip: Set<String> = emptySet()) =
+            items(key).items.filter { it.id !in skip }.mapNotNull { i -> relinked(i, key, key).takeIf { it != i } }
 
         val brought = moving.map {
             relinked(it, from, to).copy(id = ids.getValue(it.id), anchors = emptyList(), movedFrom = "$from/${it.id}")
         }
-        // The new items are written first, so that every rewritten link leads to an item that is there.
-        target.batch { b -> brought.forEach(b::put) }
-        relink(to, brought.map { it.id }.toSet())
+        val targetChanges = changes(to)
+        val sourceChanges = changes(from, ids.keys)
+        val others = projects().map { it.key }.filter { it != from && it != to }.associateWith { changes(it) }.filterValues { it.isNotEmpty() }
+        writable(listOf(from, to) + others.keys)
+        checkNoCircle(from, to, brought, targetChanges)
+
+        target.batch { b ->
+            brought.forEach(b::put)
+            targetChanges.forEach(b::replace)
+        }
         source.batch { b ->
-            source.items.filter { it.id !in ids }.forEach { i ->
-                relinked(i, from, from).takeIf { it != i }?.let { c -> b.update(i.id, touch = false) { c } }
-            }
+            sourceChanges.forEach(b::replace)
             ids.keys.forEach { b.remove(it) }
         }
-        projects().map { it.key }.filter { it != from && it != to }.forEach { relink(it) }
+        others.forEach { (key, changed) -> rewritten(items(key), changed) }
         Moved(ids, moving.sumOf { it.anchors.size })
     }
 
-    /** Renames project [old] to [new], and every qualified id that names it in every project. */
+    /** Refuses a move that would leave a blockedBy or duplicateOf circle through the items brought to [to]. */
+    private fun checkNoCircle(from: String, to: String, brought: List<TodoItem>, changed: List<TodoItem>) {
+        val after = (items(to).items.associateBy { it.id } + changed.associateBy { it.id } + brought.associateBy { it.id })
+        fun circles(start: String, next: (TodoItem) -> List<String>): Boolean {
+            val seen = HashSet<String>()
+            val left = ArrayDeque(next(after.getValue(start)).filter { '/' !in it })
+            while (left.isNotEmpty()) {
+                val id = left.removeFirst()
+                if (id == start) return true
+                if (seen.add(id)) after[id]?.let { left += next(it).filter { l -> '/' !in l } }
+            }
+            return false
+        }
+        for (b in brought) {
+            if (circles(b.id) { it.blockedBy } || circles(b.id) { listOfNotNull(it.duplicateOf) }) {
+                throw StoreException("${b.movedFrom} cannot be moved to $to: it would wait for itself there (a circle through ${b.id}); nothing was changed")
+            }
+        }
+    }
+
+    /** Refuses, before anything is written, when one of the projects [keys] cannot be changed. */
+    private fun writable(keys: Collection<String>) {
+        for (key in keys) {
+            val store = items(key)
+            store.error?.let { throw StoreException("${store.dir.path} cannot be read ($it); nothing was changed") }
+            store.project?.takeIf { it.version > ProjectJson.VERSION }?.let {
+                throw StoreException(
+                    "${store.dir.path} was written by a newer version of not-my-todo-store (layout ${it.version}): it can be read but not changed; nothing was changed"
+                )
+            }
+        }
+    }
+
+    /** Writes items whose links were renamed, as they are. */
+    private fun rewritten(store: ItemStore, changed: List<TodoItem>) {
+        if (changed.isNotEmpty()) store.batch { b -> changed.forEach(b::replace) }
+    }
+
+    /**
+     * Renames project [old] to [new], and every qualified id that names it in every project, movedFrom
+     * included. Everything is checked before the folder moves. The listeners of the old key's
+     * [ItemStore] are not carried over, and that store refuses further changes.
+     */
     fun rename(old: String, new: String): ProjectRecord = lock.withLock {
         val key = new.trim().lowercase()
         if (old == INBOX) throw StoreException("inbox cannot be renamed")
@@ -220,6 +265,21 @@ class Store(
         }
         if (key == old) return@withLock record
         if (Files.exists(dir(key).path)) throw StoreException("there already is a project $key")
+        fun renamedRef(ref: String, home: String): String {
+            val r = ItemRef.parse(ref) ?: return ref
+            return if (r.project == old) ItemRef(key, r.id).storedFrom(home) else ref
+        }
+        val changes = projects().map { it.key }.associateWith { other ->
+            val home = if (other == old) key else other
+            items(other).items.mapNotNull { i ->
+                i.copy(
+                    blockedBy = i.blockedBy.map { renamedRef(it, home) },
+                    duplicateOf = i.duplicateOf?.let { renamedRef(it, home) },
+                    movedFrom = i.movedFrom?.let { renamedRef(it, "") },
+                ).takeIf { it != i }
+            }
+        }.filterValues { it.isNotEmpty() }
+        writable(changes.keys)
         try {
             Files.move(dir(old).path, dir(key).path)
         } catch (e: IOException) {
@@ -228,17 +288,7 @@ class Store(
         open.remove(old)
         val renamed = record.copy(key = key)
         dir(key).writeRecord(renamed)
-        fun renamedRef(ref: String): String {
-            val r = ItemRef.parse(ref) ?: return ref
-            return if (r.project == old) ItemRef(key, r.id).toString() else ref
-        }
-        for (other in projects().map { it.key }) {
-            val store = items(other)
-            val changes = store.items.mapNotNull { i ->
-                i.copy(blockedBy = i.blockedBy.map(::renamedRef), duplicateOf = i.duplicateOf?.let(::renamedRef)).takeIf { it != i }
-            }
-            if (changes.isNotEmpty()) store.batch { b -> changes.forEach { c -> b.update(c.id, touch = false) { c } } }
-        }
+        changes.forEach { (other, changed) -> rewritten(items(if (other == old) key else other), changed) }
         renamed
     }
 

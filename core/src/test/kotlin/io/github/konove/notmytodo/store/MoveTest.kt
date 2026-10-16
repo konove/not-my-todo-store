@@ -85,4 +85,80 @@ class MoveTest {
         Files.writeString(newer.resolve("project.json"), """{"version":2,"key":"old2"}""")
         assertThrows(StoreException::class.java) { store.rename("old2", "new2") }
     }
+
+    private fun newer(key: String) = store.dir(key).writeRecord(store.project(key)!!.copy(version = 2))
+
+    @Test
+    fun `a move that would make a circle is refused and changes nothing`() {
+        store.items("inbox").create(Draft("a"))
+        store.items("web").create(Draft("b"))
+        store.items("inbox").update("T-1") { it.copy(blockedBy = listOf("web/T-1")) }
+        store.items("web").update("T-1") { it.copy(blockedBy = listOf("inbox/T-1")) }
+        val e = assertThrows(StoreException::class.java) { store.move("inbox", "T-1", "web") }
+        assertTrue(e.message!!.contains("circle"))
+        assertEquals(listOf("web/T-1"), store.items("inbox").find("T-1")!!.blockedBy)
+        assertEquals(listOf("inbox/T-1"), store.items("web").find("T-1")!!.blockedBy)
+        assertEquals(listOf("T-1"), store.items("web").items.map { it.id })
+    }
+
+    @Test
+    fun `a move keeps a link that was already dangling as it is`() {
+        store.items("infra").create(Draft("gone soon"))
+        store.items("inbox").create(Draft("a"))
+        store.items("inbox").create(Draft("b", blockedBy = listOf("T-1", "infra/T-1")))
+        store.items("infra").delete("T-1")
+        store.move("inbox", "T-2", "web")
+        assertNull(store.items("inbox").find("T-2"))
+        assertEquals(listOf("inbox/T-1", "infra/T-1"), store.items("web").find("T-1")!!.blockedBy)
+    }
+
+    @Test
+    fun `a move is refused before any write when a project linking to the item has a newer layout`() {
+        store.items("inbox").create(Draft("a"))
+        store.items("infra").create(Draft("c", blockedBy = listOf("inbox/T-1")))
+        newer("infra")
+        assertThrows(StoreException::class.java) { store.move("inbox", "T-1", "web") }
+        assertEquals("a", store.items("inbox").find("T-1")!!.title)
+        assertEquals(emptyList<TodoItem>(), store.items("web").items)
+        assertEquals(listOf("inbox/T-1"), store.items("infra").find("T-1")!!.blockedBy)
+    }
+
+    @Test
+    fun `a rename succeeds with a dangling link and renames it with the rest`() {
+        store.items("infra").create(Draft("one"))
+        store.items("infra").create(Draft("two"))
+        store.items("web").create(Draft("w", blockedBy = listOf("infra/T-1", "infra/T-2")))
+        store.items("infra").delete("T-2")
+        store.rename("infra", "platform")
+        assertEquals(listOf("platform/T-1", "platform/T-2"), store.items("web").find("T-1")!!.blockedBy)
+    }
+
+    @Test
+    fun `a rename is refused before the folder moves when a project linking to it has a newer layout`() {
+        store.items("infra").create(Draft("one"))
+        store.items("web").create(Draft("w", blockedBy = listOf("infra/T-1")))
+        newer("web")
+        assertThrows(StoreException::class.java) { store.rename("infra", "platform") }
+        assertTrue(Files.isDirectory(store.dir("infra").path))
+        assertNull(store.project("platform"))
+    }
+
+    @Test
+    fun `a store held for the old key refuses to write after a rename`() {
+        val held = store.items("infra")
+        held.create(Draft("x"))
+        store.rename("infra", "platform")
+        assertThrows(StoreException::class.java) { held.create(Draft("y")) }
+        assertNull(store.project("infra"))
+        assertEquals(listOf("inbox", "platform", "web"), store.projects().map { it.key })
+        assertEquals(listOf("T-1"), store.items("platform").items.map { it.id })
+    }
+
+    @Test
+    fun `a rename rewrites movedFrom`() {
+        store.items("infra").create(Draft("x"))
+        store.move("infra", "T-1", "web")
+        store.rename("infra", "platform")
+        assertEquals("platform/T-1", store.items("web").find("T-1")!!.movedFrom)
+    }
 }
