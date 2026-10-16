@@ -44,6 +44,20 @@ object TodoJson {
         return toText(root) + "\n"
     }
 
+    /** One item as it is kept in a file of its own. */
+    fun encodeItemText(item: TodoItem): String = toText(encodeItem(item)) + "\n"
+
+    /** One item from a file of its own; [name] is what errors call the file. */
+    fun decodeItemText(text: String, name: String): TodoItem {
+        if (text.isBlank()) throw TodoFormatException("$name is empty")
+        val element = try {
+            JsonParser.parseString(text)
+        } catch (e: JsonParseException) {
+            throw TodoFormatException("$name is not valid JSON: ${e.message}")
+        }
+        return decodeItem(element, name)
+    }
+
     fun encodeItem(item: TodoItem): JsonObject {
         val o = JsonObject()
         o.addProperty("id", item.id)
@@ -125,7 +139,7 @@ object TodoJson {
         val version = obj.int("version") ?: 1
         if (version !in 1..NEWEST_VERSION) throw TodoFormatException("unsupported version $version")
         val array = obj.get("items")?.takeIf { it.isJsonArray }?.asJsonArray ?: JsonArray()
-        val items = array.mapIndexed { index, element -> decodeItem(element, index) }
+        val items = array.mapIndexed { index, element -> decodeItem(element, "item ${index + 1}") }
         val duplicate = items.groupBy { it.id }.entries.firstOrNull { it.value.size > 1 }
         if (duplicate != null) throw TodoFormatException("id ${duplicate.key} is used more than once")
         val highest = items.maxOfOrNull { it.number } ?: 0
@@ -133,11 +147,11 @@ object TodoJson {
         return TodoFile(NEWEST_VERSION, nextId, items.sortedBy { it.number }, obj.unknown(fileKeys))
     }
 
-    private fun decodeItem(element: JsonElement, index: Int): TodoItem {
-        if (!element.isJsonObject) throw TodoFormatException("item ${index + 1} is not an object")
+    private fun decodeItem(element: JsonElement, where: String): TodoItem {
+        if (!element.isJsonObject) throw TodoFormatException("$where is not an object")
         val o = element.asJsonObject
-        val id = o.str("id") ?: throw TodoFormatException("item ${index + 1} has no id")
-        if (ItemId.parse(id) == null) throw TodoFormatException("item ${index + 1} has a bad id \"$id\" (expected T-1, T-2, ...)")
+        val id = o.str("id") ?: throw TodoFormatException("$where has no id")
+        if (ItemId.parse(id) == null) throw TodoFormatException("$where has a bad id \"$id\" (expected T-1, T-2, ...)")
         val title = o.str("title")?.trim().orEmpty()
         if (title.isEmpty()) throw TodoFormatException("item $id has no title")
         val priority = o.str("priority")?.let {
@@ -162,8 +176,8 @@ object TodoJson {
             id = id, title = title, details = o.str("details").orEmpty(), priority = priority,
             tags = Tags.normalizeAll(o.strList("tags")), status = status, author = author,
             created = o.str("created").orEmpty(), updated = o.str("updated").orEmpty(), comments = comments,
-            anchors = anchors, blockedBy = o.strList("blockedBy").mapNotNull(ItemId::normalize).distinct(),
-            duplicateOf = o.str("duplicateOf")?.let(ItemId::normalize), parent = o.str("parent")?.let(ItemId::normalize),
+            anchors = anchors, blockedBy = o.strList("blockedBy").mapNotNull(ItemRef::normalize).distinct(),
+            duplicateOf = o.str("duplicateOf")?.let(ItemRef::normalize), parent = o.str("parent")?.let(ItemRef::normalize),
             source = o.text("source"), fixedIn = o.text("fixedIn"), resolution = o.text("resolution"),
             toDecide = o.text("toDecide"), decisions = decisions, effort = effort,
             unknown = o.unknown(itemKeys),

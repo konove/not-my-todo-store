@@ -274,4 +274,28 @@ class TodoJsonTest {
             TodoJson.decode("""{"items":[{"id":"T-1","title":"a","effort":"xl"}]}""")
         }
     }
+
+    @Test
+    fun `qualified links are kept`() {
+        val file = TodoJson.decode(
+            """{"items":[{"id":"T-1","title":"a","blockedBy":["infra/T-3","t-2"],"duplicateOf":"Web/4"},{"id":"T-2","title":"b"}]}"""
+        )
+        val item = file.items.first()
+        assertEquals(listOf("infra/T-3", "T-2"), item.blockedBy)
+        assertEquals("web/T-4", item.duplicateOf)
+    }
+
+    @Test
+    fun `one item round-trips through a file of its own`() {
+        val item = TodoItem("T-9", "alone", tags = listOf("x"), blockedBy = listOf("infra/T-1"))
+        assertEquals(item, TodoJson.decodeItemText(TodoJson.encodeItemText(item), "T-9.json"))
+    }
+
+    @Test
+    fun `a bad item file is named in the error`() {
+        val bad = assertThrows(TodoFormatException::class.java) { TodoJson.decodeItemText("{ nope", "T-9.json") }
+        assertTrue(bad.message!!.contains("T-9.json"))
+        val blank = assertThrows(TodoFormatException::class.java) { TodoJson.decodeItemText("\n", "T-9.json") }
+        assertTrue(blank.message!!.contains("T-9.json"))
+    }
 }

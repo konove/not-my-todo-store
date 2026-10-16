@@ -151,13 +151,21 @@ data class TodoFile(
     val unknown: Map<String, JsonElement> = emptyMap(),
 )
 
-/** How [items], all those of one file, refer to each other. A link to an item that is not there counts for nothing. */
-class Links(items: List<TodoItem>) {
+/**
+ * How [items], all those of one project, refer to each other. A link to an item that is not there
+ * counts for nothing. [foreign] finds an item of another project by its qualified id, `key/T-3`.
+ */
+class Links(items: List<TodoItem>, private val foreign: (String) -> TodoItem? = { null }) {
     private val byId = items.associateBy { it.id }
     private val parts = items.filter { it.parent != null }.groupBy { it.parent }
 
     /** The items [item] still waits for: those it is blocked by that are not closed. */
-    fun openBlockers(item: TodoItem): List<TodoItem> = item.blockedBy.mapNotNull { byId[it] }.filterNot { it.isClosed }
+    fun openBlockers(item: TodoItem): List<TodoItem> = item.blockedBy.mapNotNull(::blocker).filterNot { it.isClosed }
+
+    /** The links of [item] to the blockers it still waits for, as they are stored: `T-3` or `infra/T-3`. */
+    fun openBlockerIds(item: TodoItem): List<String> = item.blockedBy.filter { blocker(it)?.isClosed == false }
+
+    private fun blocker(ref: String): TodoItem? = byId[ref] ?: if ('/' in ref) foreign(ref) else null
 
     fun isBlocked(item: TodoItem): Boolean = openBlockers(item).isNotEmpty()
 
