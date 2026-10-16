@@ -42,12 +42,19 @@ class McpServer(
         // An answer to a request of ours; this server makes none.
         val method = message.get("method")?.takeIf { it.isJsonPrimitive }?.asString ?: return null
         val params = message.get("params")?.takeIf { it.isJsonObject }?.asJsonObject ?: JsonObject()
-        return when (method) {
-            "initialize" -> result(id, initialize(params))
-            "ping" -> result(id, JsonObject())
-            "tools/list" -> result(id, JsonObject().apply { add("tools", JsonArray().also { a -> tools.forEach { a.add(describe(it)) } }) })
-            "tools/call" -> result(id, call(params))
-            else -> error(id, -32601, "Method not found")
+        return try {
+            when (method) {
+                "initialize" -> result(id, initialize(params))
+                "ping" -> result(id, JsonObject())
+                "tools/list" -> result(id, JsonObject().apply { add("tools", JsonArray().also { a -> tools.forEach { a.add(describe(it)) } }) })
+                "tools/call" -> result(id, call(params))
+                else -> error(id, -32601, "Method not found")
+            }
+        } catch (e: Exception) {
+            // One failed request must not end the server; the agent gets the failure as its answer.
+            System.err.println("$method failed")
+            e.printStackTrace()
+            error(id, -32603, "Internal error: $e")
         }
     }
 
@@ -76,7 +83,7 @@ class McpServer(
             text(tool.run(Args(arguments, tool.params)), error = false)
         } catch (e: ToolError) {
             text(e.message ?: "the tool failed", error = true)
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             System.err.println("$name failed")
             e.printStackTrace()
             text("internal error in $name: $e", error = true)

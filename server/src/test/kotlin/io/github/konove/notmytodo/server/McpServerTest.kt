@@ -32,6 +32,17 @@ class McpServerTest {
     }
 
     @Test
+    fun `a request that fails is answered with an internal error, and the server goes on`() {
+        val failing = McpServer("t", "1", { throw IllegalStateException("no store") }, listOf(echo))
+        val answer = JsonParser.parseString(failing.handle("""{"jsonrpc":"2.0","id":1,"method":"initialize"}""")!!).asJsonObject
+        assertEquals(-32603, answer.getAsJsonObject("error").get("code").asInt)
+        val input = """{"jsonrpc":"2.0","id":1,"method":"initialize"}""" + "\n" + """{"jsonrpc":"2.0","id":2,"method":"ping"}""" + "\n"
+        val output = ByteArrayOutputStream()
+        failing.serve(ByteArrayInputStream(input.toByteArray()), output)
+        assertEquals("""{"jsonrpc":"2.0","id":2,"result":{}}""", output.toString(Charsets.UTF_8).trim().lines().last())
+    }
+
+    @Test
     fun `tools are listed with their schemas`() {
         val tools = call("""{"jsonrpc":"2.0","id":1,"method":"tools/list"}""").getAsJsonObject("result").getAsJsonArray("tools")
         val first = tools[0].asJsonObject
