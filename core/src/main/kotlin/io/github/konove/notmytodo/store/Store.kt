@@ -55,6 +55,22 @@ class Store(
         }
     }
 
+    /** The projects whose folder has a project.json that cannot be read, by key, with why. */
+    fun unreadableProjects(): List<Pair<String, String>> {
+        if (!Files.isDirectory(projectsDir)) return emptyList()
+        val dirs = Files.list(projectsDir).use { s -> s.filter { Files.isDirectory(it) }.sorted().toList() }
+        return dirs.mapNotNull {
+            try {
+                ProjectDir(it).readRecord()
+                null
+            } catch (e: TodoFormatException) {
+                it.fileName.toString() to (e.message ?: "it is not valid")
+            } catch (e: IOException) {
+                it.fileName.toString() to (e.message ?: "it cannot be read")
+            }
+        }
+    }
+
     fun project(key: String): ProjectRecord? = try {
         if (ItemRef.KEY.matches(key)) dir(key).readRecord() else null
     } catch (_: TodoFormatException) {

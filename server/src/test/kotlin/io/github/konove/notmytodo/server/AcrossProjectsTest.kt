@@ -57,4 +57,44 @@ class AcrossProjectsTest {
             assertTrue(e.message!!.contains("nowhere"))
         }
     }
+
+    @Test
+    fun `a fresh repository lists nothing, and star lists every project`() {
+        val fresh = TempRepo.create(tmp.resolve("fresh"), "git@github.com:me/fresh.git")
+        val tools = TodoTools(Workspace(store, fresh))
+        assertEquals("[]", tools.list())
+        assertEquals(3, JsonParser.parseString(tools.list(compact = true, project = "*")).asJsonArray.size())
+    }
+
+    @Test
+    fun `a blank project is none`() {
+        val tools = TodoTools(Workspace(store, home))
+        assertEquals(tools.list(compact = true), tools.list(compact = true, project = "  "))
+        assertEquals("[]", TodoTools(Workspace(store, TempRepo.create(tmp.resolve("fresh2"), "git@github.com:me/f2.git"))).list(project = ""))
+    }
+
+    @Test
+    fun `a broken project and an unreadable item are named in a last element`() {
+        Files.createDirectories(tmp.resolve("store/projects/bad"))
+        Files.writeString(tmp.resolve("store/projects/bad/project.json"), "{ broken")
+        Files.writeString(tmp.resolve("store/projects/api/items/T-9.json"), "{ broken")
+        val tools = TodoTools(Workspace(store, home))
+        val star = JsonParser.parseString(tools.list(compact = true, project = "*")).asJsonArray.map { it.asJsonObject }
+        assertEquals(3, star.count { it.has("title") })
+        val bad = star.last().getAsJsonArray("unreadable").map { it.asJsonObject }
+        assertTrue(bad.any { it.get("project").asString == "bad" && it.get("file").asString == "project.json" })
+        assertTrue(bad.any { it.get("project").asString == "api" && it.get("file").asString == "T-9.json" })
+        val one = JsonParser.parseString(TodoTools(Workspace(store, api)).list(compact = true)).asJsonArray.map { it.asJsonObject }
+        assertEquals("T-9.json", one.last().getAsJsonArray("unreadable")[0].asJsonObject.get("file").asString)
+        val full = JsonParser.parseString(TodoTools(Workspace(store, api)).list()).asJsonArray.map { it.asJsonObject }
+        assertTrue(full.last().has("unreadable"))
+        val projects = JsonParser.parseString(tools.projects()).asJsonArray.map { it.asJsonObject }
+        assertTrue(projects.any { it.get("key").asString == "bad" && it.has("error") })
+    }
+
+    @Test
+    fun `todo_move to a folder that is no project means inbox`() {
+        val reply = JsonParser.parseString(TodoTools(Workspace(store, web)).move("web/T-1", home.toString())).asJsonObject
+        assertEquals("inbox/T-1", reply.getAsJsonObject("moved").get("web/T-1").asString)
+    }
 }

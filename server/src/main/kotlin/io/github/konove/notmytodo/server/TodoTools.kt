@@ -39,19 +39,34 @@ class TodoTools(val workspace: Workspace) {
         project: String? = null,
     ): String {
         val filter = ListFilter(status, tags, priority, path, withoutTags, text, compact, lost, blocked, parent, effort, anyText)
-        val star = project?.trim() == "*"
-        val scope = if (star) null else found { workspace.scope(project) }
-        if (scope != null) return Call(scope, workspace).list(filter)
-        if (!star && project != null) return "[]"
-        // Every project: asked for with *, or the folder this session runs in has none.
+        val wanted = project?.trim()?.takeIf { it.isNotEmpty() }
+        // Only a session in a folder that is no project at all (~, /) lists every project by default.
+        val everywhere = wanted == "*" || (wanted == null && found { workspace.here() }.let { it.record == null && it.root == null })
+        if (!everywhere) return found { workspace.scope(wanted) }?.let { Call(it, workspace).list(filter) } ?: "[]"
+        val problems = ArrayList<JsonObject>()
         val rows = found { workspace.store.projects() }.flatMap { record ->
             val call = Call(found { workspace.scopeOf(record) }, workspace)
+            val error = workspace.store.items(record.key).error
+            if (error != null) {
+                problems += problem(record.key, "project.json", error)
+                return@flatMap emptyList()
+            }
+            problems += call.unreadable(qualify = true)
             val (items, links) = call.select(filter)
             call.render(items, links, filter.compact, qualify = true)
         }
-        return if (filter.compact) rows.joinToString(",\n", "[\n", "\n]").takeIf { rows.isNotEmpty() } ?: "[]"
-        else TodoJson.toText(JsonArray().also { a -> rows.forEach(a::add) })
+        found { workspace.store.unreadableProjects() }.forEach { (key, why) -> problems += problem(key, "project.json", why) }
+        return listed(rows + trailing(problems), filter.compact)
     }
+
+    private fun problem(project: String, file: String, why: String) = JsonObject().apply {
+        addProperty("project", project)
+        addProperty("file", file)
+        addProperty("problem", why)
+    }
+
+    private fun trailing(problems: List<JsonObject>): List<JsonObject> =
+        if (problems.isEmpty()) emptyList() else listOf(JsonObject().apply { add("unreadable", JsonArray().also { a -> problems.forEach(a::add) }) })
 
     /** The projects of this machine, with the counts that say where there is work. */
     fun projects(): String {
@@ -68,12 +83,20 @@ class TodoTools(val workspace: Workspace) {
                 addProperty("fixed", items.count { it.status == Status.FIXED })
             }
         }
-        return if (rows.isEmpty()) "[]" else rows.joinToString(",\n", "[\n", "\n]") { it.toString() }
+        val broken = found { workspace.store.unreadableProjects() }.map { (key, why) -> errored(key, why) }
+        val failing = found { workspace.store.projects() }.mapNotNull { r -> workspace.store.items(r.key).error?.let { errored(r.key, it) } }
+        val all = rows + broken + failing
+        return if (all.isEmpty()) "[]" else all.joinToString(",\n", "[\n", "\n]") { it.toString() }
+    }
+
+    private fun errored(key: String, why: String) = JsonObject().apply {
+        addProperty("key", key)
+        addProperty("error", why)
     }
 
     fun move(id: String, to: String, withParts: Boolean = false, project: String? = null): String {
         val (scope, bare) = found { workspace.target(id, project) }
-        val target = (found { workspace.scope(to) } ?: throw ToolError("$to has no project yet: create an item there first")).key
+        val target = (found { workspace.destination(to) } ?: throw ToolError("$to has no project yet: create an item there first")).key
         val moved = try {
             workspace.store.move(scope.key, bare, target, withParts)
         } catch (e: StoreException) {
@@ -145,6 +168,13 @@ class TodoTools(val workspace: Workspace) {
     }
 }
 
+/** [rows] as the text of a list: one item per line when compact, since pretty printing would triple the size of a list that is meant to be read whole. */
+private fun listed(rows: List<JsonObject>, compact: Boolean): String = when {
+    !compact -> TodoJson.toText(JsonArray().also { a -> rows.forEach(a::add) })
+    rows.isEmpty() -> "[]"
+    else -> rows.joinToString(",\n", "[\n", "\n]") { it.toString() }
+}
+
 /** One tool call, in the project of [scope]. */
 private class Call(private val scope: Scope, private val workspace: Workspace) {
     private val store get() = scope.items
@@ -178,10 +208,19 @@ private class Call(private val scope: Scope, private val workspace: Workspace) {
 
     fun list(filter: ListFilter): String {
         val (found, links) = select(filter)
-        val rows = render(found, links, filter.compact, qualify = false)
-        // One item per line: pretty printing would triple the size of a list that is meant to be read whole.
-        if (filter.compact) return rows(rows)
-        return TodoJson.toText(JsonArray().also { a -> rows.forEach(a::add) })
+        val bad = unreadable(qualify = false)
+        val rows = render(found, links, filter.compact, qualify = false) +
+            if (bad.isEmpty()) emptyList() else listOf(JsonObject().apply { add("unreadable", JsonArray().also { a -> bad.forEach(a::add) }) })
+        return listed(rows, filter.compact)
+    }
+
+    /** The item files of this project that could not be read, as the last element of a list names them. */
+    fun unreadable(qualify: Boolean): List<JsonObject> = scope.items.unreadable.map {
+        JsonObject().apply {
+            if (qualify) addProperty("project", scope.key)
+            addProperty("file", it.file)
+            addProperty("problem", it.problem)
+        }
     }
 
     fun render(found: List<TodoItem>, links: Links, compact: Boolean, qualify: Boolean): List<JsonObject> {

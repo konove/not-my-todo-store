@@ -56,6 +56,14 @@ class Workspace(val store: Store, val cwd: Path) {
 
     fun scopeOf(record: ProjectRecord): Scope = scopeOf(record, null)
 
+    /** The project an item is moved to: as [scope], and a folder that is never a project, such as the home folder, means inbox. */
+    fun destination(to: String): Scope? {
+        scope(to, create = false, inbox = true)?.let { return it }
+        val wanted = to.trim().takeIf { isPath(it) } ?: return null
+        val folder = cwd.resolve(expand(wanted)).normalize()
+        return if (Files.isDirectory(folder) && store.resolve(folder).root == null) scopeOf(store.inbox()) else null
+    }
+
     /** The scope and bare id of the item [raw] names: a qualified id names its own project. */
     fun target(raw: String, project: String?): Pair<Scope, String> {
         val ref = ItemRef.parse(raw) ?: throw ToolError("\"${raw.trim()}\" is not an item id: write T-1, T-2, ... or project/T-1")

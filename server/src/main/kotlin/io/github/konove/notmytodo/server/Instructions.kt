@@ -11,7 +11,7 @@ object Instructions {
         val record = here?.record
         val where = when {
             record != null -> "The current project is ${record.key}, the repository at ${here.root}."
-            here?.root != null -> "${here.root} has no project yet: todo_list lists every project, and the first todo_create here makes one."
+            here?.root != null -> "${here.root} has no project yet: todo_list shows nothing here until the first todo_create makes one; pass project=\"*\" to list every project."
             else -> "The folder this session runs in is not a project: todo_list lists every project, and todo_create files into inbox."
         }
         return listOf(
