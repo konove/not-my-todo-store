@@ -5,6 +5,8 @@ import io.github.konove.notmytodo.model.Author
 import io.github.konove.notmytodo.model.Effort
 import io.github.konove.notmytodo.model.Status
 import io.github.konove.notmytodo.store.Draft
+import io.github.konove.notmytodo.store.Import
+import io.github.konove.notmytodo.store.ImportResult
 import io.github.konove.notmytodo.store.ItemStore
 import io.github.konove.notmytodo.store.Store
 import io.github.konove.notmytodo.store.TempRepo
@@ -1059,5 +1061,31 @@ class TodoToolsTest {
         Files.createDirectories(tmp.resolve("store/projects/inbox"))
         Files.writeString(tmp.resolve("store/projects/inbox/project.json"), "{ broken")
         failsWith("project.json") { TodoTools(Workspace(stores, home)).create("x", null, null, null, null, null, null) }
+    }
+
+    @Test
+    fun `a repository whose items are still in its items json is left to the plugin until they are imported`() {
+        val old = TempRepo.create(tmp.resolve("old"), "git@github.com:me/old.git")
+        val file = old.resolve(".todos/items.json")
+        Files.createDirectories(file.parent)
+        Files.writeString(file, """{"version":2,"nextId":2,"items":[{"id":"T-1","title":"kept by the plugin"}]}""")
+        val workspace = Workspace(stores, old)
+        val inOld = TodoTools(workspace)
+        val still = "the items of $old are still in .todos/items.json, kept by the Not My TODO plugin: " +
+            "use the IDE's todo tools there until the plugin imports them into the store"
+        failsWith(still) { inOld.list() }
+        failsWith(still) { inOld.get("T-1") }
+        failsWith(still) { inOld.create("x", null, null, null, null, null, null) }
+        failsWith(still) { inOld.batch("""[{"title": "x"}]""") }
+        failsWith(still) { tools.move("T-1", old.toString()) }
+        assertNull(stores.project("old"))
+        assertTrue(Instructions.of(workspace).contains("still in .todos/items.json"))
+        assertEquals(0, JsonParser.parseString(inOld.list(compact = true, project = "*")).asJsonArray.size())
+        tools.create("here", null, null, null, null, null, null)
+        assertEquals("here", JsonParser.parseString(inOld.get("demo/T-1")).asJsonObject.get("title").asString)
+
+        val key = stores.ensure(stores.resolve(old)).record.key
+        assertEquals(ImportResult.Imported(1), Import.run(stores, key, file))
+        assertEquals("T-2", JsonParser.parseString(inOld.create("next", null, null, null, null, null, null)).asJsonObject.get("id").asString)
     }
 }

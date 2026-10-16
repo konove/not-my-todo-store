@@ -47,7 +47,10 @@ class Workspace(val store: Store, val cwd: Path) {
         }
         resolution.record?.let { return scopeOf(it, resolution) }
         if (inbox && resolution.root == null && Files.isDirectory(store.dir(Store.INBOX).path)) return scopeOf(store.inbox())
-        resolution.root?.let(::unreadable)
+        resolution.root?.let {
+            unreadable(it)
+            notImported(it)
+        }
         if (!create) return null
         val ensured = store.ensure(resolution)
         val notice = if (ensured.created) "created project \"${ensured.record.key}\" for ${resolution.root}" else null
@@ -87,6 +90,26 @@ class Workspace(val store: Store, val cwd: Path) {
         throw ToolError(
             "${store.dir(key).path.resolve("project.json")} cannot be read ($why), and it may be the project of $root. " +
                 "Fix or delete project.json there."
+        )
+    }
+
+    /**
+     * The items.json the Not My TODO plugin keeps in [root], which has no project, while no project
+     * has imported it; null when there is none. A project made now would hand out the ids that file
+     * already has, and its import would then clash with every one of them.
+     */
+    fun unimported(root: Path): Path? {
+        val file = root.resolve(".todos").resolve("items.json").toAbsolutePath().normalize()
+        if (!Files.isRegularFile(file)) return null
+        return file.takeIf { f -> store.projects().none { it.importedFrom?.path == f.toString() } }
+    }
+
+    /** Refuses [root], which has no project, while its items are still in the plugin's items.json. */
+    private fun notImported(root: Path) {
+        if (unimported(root) == null) return
+        throw ToolError(
+            "the items of $root are still in .todos/items.json, kept by the Not My TODO plugin: " +
+                "use the IDE's todo tools there until the plugin imports them into the store"
         )
     }
 
