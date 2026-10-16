@@ -434,6 +434,7 @@ class ItemStoreTest {
         assertEquals(listOf("T-7.json"), s.unreadable.map { it.file })
         assertEquals("T-8", s.create(Draft("b")).id)
         assertThrows(StoreException::class.java) { s.update("T-7") { it.copy(title = "x") } }
+        assertThrows(StoreException::class.java) { s.batch { it.put(TodoItem("T-7", "over it")) } }
         assertEquals("{ hand-edited", Files.readString(itemFile("T-7")))
     }
 

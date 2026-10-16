@@ -123,6 +123,7 @@ class ItemStore(
         /** Adds [item] as it is, with its id: for items brought from elsewhere, whose links are already right. */
         fun put(item: TodoItem) {
             if (file.items.any { it.id == item.id }) throw StoreException("there already is an item with id ${item.id}")
+            if (bad.any { it.file == "${item.id}.json" }) throw StoreException("${item.id}.json cannot be read and is left as it is")
             file = file.copy(nextId = maxOf(file.nextId, item.number + 1), items = (file.items + item).sortedBy { it.number })
         }
 
