@@ -1,13 +1,11 @@
 package io.github.konove.notmytodo.server
 
 import io.github.konove.notmytodo.model.ItemRef
-import io.github.konove.notmytodo.model.TodoFormatException
 import io.github.konove.notmytodo.store.FixCommits
 import io.github.konove.notmytodo.store.ItemStore
 import io.github.konove.notmytodo.store.ProjectRecord
 import io.github.konove.notmytodo.store.Resolution
 import io.github.konove.notmytodo.store.Store
-import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.ConcurrentHashMap
@@ -84,7 +82,7 @@ class Workspace(val store: Store, val cwd: Path) {
      */
     private fun unreadable(root: Path) {
         val key = Store.keyFor(root, emptySet())
-        val why = problem(key) ?: return
+        val why = store.problem(key) ?: return
         throw ToolError(
             "${store.dir(key).path.resolve("project.json")} cannot be read ($why), and it may be the project of $root. " +
                 "Fix or delete project.json there."
@@ -106,22 +104,9 @@ class Workspace(val store: Store, val cwd: Path) {
     private fun notImported(root: Path) {
         if (unimported(root) == null) return
         throw ToolError(
-            "the items of $root are still in .todos/items.json, kept by the Not My TODO plugin: " +
-                "use the IDE's todo tools there until the plugin imports them into the store"
+            "the items of $root are still in .todos/items.json: " +
+                "open the project once in the IDE with Not My TODO 0.3.0 or newer, which moves them into the store"
         )
-    }
-
-    /** Why the project.json of [key] cannot be read; null when it can, or when there is none. */
-    private fun problem(key: String): String? {
-        if (!ItemRef.KEY.matches(key)) return null
-        return try {
-            store.dir(key).readRecord()
-            null
-        } catch (e: TodoFormatException) {
-            e.message ?: "it is not valid"
-        } catch (e: IOException) {
-            e.message ?: "it cannot be read"
-        }
     }
 
     private fun isPath(text: String) = '/' in text || '\\' in text || text.startsWith(".") || text.startsWith("~")
@@ -130,7 +115,7 @@ class Workspace(val store: Store, val cwd: Path) {
         if (text == "~" || text.startsWith("~/")) System.getProperty("user.home") + text.removePrefix("~") else text
 
     private fun unknown(key: String): String {
-        problem(key.lowercase())?.let {
+        store.problem(key.lowercase())?.let {
             return "${store.dir(key.lowercase()).path.resolve("project.json")} cannot be read ($it). Fix or delete project.json there."
         }
         val keys = store.projects().map { it.key }

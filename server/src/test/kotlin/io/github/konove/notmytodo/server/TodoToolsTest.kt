@@ -1071,15 +1071,15 @@ class TodoToolsTest {
         Files.writeString(file, """{"version":2,"nextId":2,"items":[{"id":"T-1","title":"kept by the plugin"}]}""")
         val workspace = Workspace(stores, old)
         val inOld = TodoTools(workspace)
-        val still = "the items of $old are still in .todos/items.json, kept by the Not My TODO plugin: " +
-            "use the IDE's todo tools there until the plugin imports them into the store"
+        val still = "the items of $old are still in .todos/items.json: " +
+            "open the project once in the IDE with Not My TODO 0.3.0 or newer, which moves them into the store"
         failsWith(still) { inOld.list() }
         failsWith(still) { inOld.get("T-1") }
         failsWith(still) { inOld.create("x", null, null, null, null, null, null) }
         failsWith(still) { inOld.batch("""[{"title": "x"}]""") }
         failsWith(still) { tools.move("T-1", old.toString()) }
         assertNull(stores.project("old"))
-        assertTrue(Instructions.of(workspace).contains("still in .todos/items.json"))
+        assertTrue(Instructions.of(workspace).contains("still in .todos/items.json: open the project once in the IDE"))
         assertEquals(0, JsonParser.parseString(inOld.list(compact = true, project = "*")).asJsonArray.size())
         tools.create("here", null, null, null, null, null, null)
         assertEquals("here", JsonParser.parseString(inOld.get("demo/T-1")).asJsonObject.get("title").asString)

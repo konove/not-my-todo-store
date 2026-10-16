@@ -12,8 +12,8 @@ object Instructions {
         val where = when {
             record != null -> "The current project is ${record.key}, the repository at ${here.root}."
             here?.root?.let(workspace::unimported) != null ->
-                "The items of ${here.root} are still in .todos/items.json, kept by the Not My TODO plugin: use the IDE's todo tools there " +
-                    "until the plugin imports them into the store. todo_list with project=\"*\" lists every other project."
+                "The items of ${here.root} are still in .todos/items.json: open the project once in the IDE with Not My TODO 0.3.0 " +
+                    "or newer, which moves them into the store. todo_list with project=\"*\" lists every other project."
             here?.root != null -> "${here.root} has no project yet: todo_list shows nothing here until the first todo_create makes one; pass project=\"*\" to list every project."
             else -> "The folder this session runs in is not a project: todo_list lists every project, and todo_create files into inbox."
         }
