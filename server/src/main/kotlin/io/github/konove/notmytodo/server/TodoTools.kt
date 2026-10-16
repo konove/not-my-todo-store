@@ -93,7 +93,8 @@ private class Call(private val scope: Scope, private val workspace: Workspace) {
     private val store get() = scope.items
 
     fun list(filter: ListFilter): String {
-        val partOf = filter.parent?.takeIf { it.isNotBlank() }?.let(::parseId)
+        // Parents are stored bare, so the project's own key is taken off.
+        val partOf = filter.parent?.takeIf { it.isNotBlank() }?.let { parseRef(it).storedFrom(scope.key) }
         val statuses = words(filter.status).map(::parseStatus)
         val wantedPriority = filter.priority?.takeIf { it.isNotBlank() }?.let(::parsePriority)
         val wantedEffort = filter.effort?.takeIf { it.isNotBlank() }?.let(::parseEffort)
@@ -660,8 +661,10 @@ private class Call(private val scope: Scope, private val workspace: Workspace) {
         throw ToolError(e.message ?: "not an item id")
     }
 
-    private fun parseId(value: String): String =
-        ItemRef.normalize(value) ?: throw ToolError("\"${value.trim()}\" is not an item id: write T-1, T-2, ... or project/T-1")
+    private fun parseId(value: String): String = parseRef(value).toString()
+
+    private fun parseRef(value: String): ItemRef =
+        ItemRef.parse(value) ?: throw ToolError("\"${value.trim()}\" is not an item id: write T-1, T-2, ... or project/T-1")
 
     private fun parsePriority(value: String): Priority =
         Priority.fromJson(value) ?: throw ToolError("priority must be one of p1, p2, p3")

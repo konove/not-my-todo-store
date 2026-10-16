@@ -29,7 +29,10 @@ class Workspace(val store: Store, val cwd: Path) {
      * The project a tool works in: [project] when given (a key, inbox or a folder), else the one of
      * [cwd]. Null when that folder has no project yet, unless [create], which makes it.
      */
-    fun scope(project: String?, create: Boolean = false): Scope? {
+    fun scope(project: String?, create: Boolean = false): Scope? = scope(project, create, inbox = false)
+
+    /** As [scope]; with [inbox], the home folder and / give inbox, where an item made there was filed. */
+    private fun scope(project: String?, create: Boolean, inbox: Boolean): Scope? {
         val wanted = project?.trim()?.takeIf { it.isNotEmpty() }
         val resolution = when {
             wanted == null -> here()
@@ -43,9 +46,8 @@ class Workspace(val store: Store, val cwd: Path) {
             else -> return scopeOf(store.project(wanted.lowercase()) ?: throw ToolError(unknown(wanted)))
         }
         resolution.record?.let { return scopeOf(it, resolution) }
-        // The home folder and / file into inbox, so what was filed there is found there again.
-        if (resolution.root == null && (create || Files.isDirectory(store.dir(Store.INBOX).path))) return scopeOf(store.inbox())
-        unreadable(resolution)
+        if (inbox && resolution.root == null && Files.isDirectory(store.dir(Store.INBOX).path)) return scopeOf(store.inbox())
+        resolution.root?.let(::unreadable)
         if (!create) return null
         val ensured = store.ensure(resolution)
         val notice = if (ensured.created) "created project \"${ensured.record.key}\" for ${resolution.root}" else null
@@ -57,7 +59,7 @@ class Workspace(val store: Store, val cwd: Path) {
     /** The scope and bare id of the item [raw] names: a qualified id names its own project. */
     fun target(raw: String, project: String?): Pair<Scope, String> {
         val ref = ItemRef.parse(raw) ?: throw ToolError("\"${raw.trim()}\" is not an item id: write T-1, T-2, ... or project/T-1")
-        val scope = scope(ref.project ?: project) ?: throw ToolError("there is no item with id ${ref.id}: $cwd has no project yet")
+        val scope = scope(ref.project ?: project, create = false, inbox = true) ?: throw ToolError("there is no item with id ${ref.id}: $cwd has no project yet")
         return scope to ref.id
     }
 
@@ -68,20 +70,16 @@ class Workspace(val store: Store, val cwd: Path) {
     }
 
     /**
-     * Refuses a folder that has no project while the project.json of some project cannot be read:
-     * that one may be the folder's, and another made now would split its items in two.
+     * Refuses [root], which has no project, while the project its name would be the key of has a
+     * project.json that cannot be read: that one may be its own, and another made now would split its items in two.
      */
-    private fun unreadable(resolution: Resolution) {
-        val projects = store.root.resolve("projects")
-        if (!Files.isDirectory(projects)) return
-        val keys = Files.list(projects).use { s -> s.filter { Files.isDirectory(it) }.map { it.fileName.toString() }.sorted().toList() }
-        for (key in keys) {
-            val why = problem(key) ?: continue
-            throw ToolError(
-                "${store.dir(key).path.resolve("project.json")} cannot be read ($why), and it may be the project of " +
-                    "${resolution.root}. Fix or delete project.json there."
-            )
-        }
+    private fun unreadable(root: Path) {
+        val key = Store.keyFor(root, emptySet())
+        val why = problem(key) ?: return
+        throw ToolError(
+            "${store.dir(key).path.resolve("project.json")} cannot be read ($why), and it may be the project of $root. " +
+                "Fix or delete project.json there."
+        )
     }
 
     /** Why the project.json of [key] cannot be read; null when it can, or when there is none. */

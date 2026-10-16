@@ -323,6 +323,7 @@ class TodoToolsTest {
         assertEquals(listOf("T-3"), ids(tools.list(blocked = true)))
         assertEquals(listOf("T-1", "T-2"), ids(tools.list(blocked = false)))
         assertEquals(listOf("T-2", "T-3"), ids(tools.list(parent = "T-1")))
+        assertEquals(listOf("T-2", "T-3"), ids(tools.list(parent = "demo/T-1")))
         val row = JsonParser.parseString(tools.list(compact = true)).asJsonArray[2].asJsonObject
         assertEquals("T-2", row.get("blockedBy").asString)
         assertEquals("T-1", row.get("parent").asString)
@@ -1018,6 +1019,24 @@ class TodoToolsTest {
         inHome.create("an idea", null, null, null, null, null, null)
         inHome.update("T-1", "a better idea", null, null, null, null)
         assertEquals("a better idea", JsonParser.parseString(inHome.get("T-1")).asJsonObject.get("title").asString)
-        assertEquals(listOf("T-1"), JsonParser.parseString(inHome.list()).asJsonArray.map { it.asJsonObject.get("id").asString })
+        // A list from the home folder is not the inbox's.
+        assertEquals("[]", inHome.list())
+    }
+
+    @Test
+    fun `a broken project of another repository does not stop making a project`() {
+        Files.createDirectories(tmp.resolve("store/projects/other"))
+        Files.writeString(tmp.resolve("store/projects/other/project.json"), "{ broken")
+        val fresh = TempRepo.create(tmp.resolve("fresh"), "git@github.com:me/fresh.git")
+        TodoTools(Workspace(stores, fresh)).create("first", null, null, null, null, null, null)
+        assertEquals("first", stores.items("fresh").find("T-1")!!.title)
+    }
+
+    @Test
+    fun `a link that leads out of the checkout is refused`() {
+        Files.writeString(tmp.resolve("secret.txt"), "secret\n")
+        Files.createSymbolicLink(repo.resolve("link.txt"), tmp.resolve("secret.txt"))
+        failsWith("not found") { tools.create("x", null, null, null, "link.txt", 1, 1) }
+        assertEquals(0, store.items.size)
     }
 }

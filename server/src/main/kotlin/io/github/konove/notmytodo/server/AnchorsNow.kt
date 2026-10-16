@@ -30,6 +30,8 @@ object AnchorsNow {
         val file = checkout.resolve(path).normalize()
         if (!file.startsWith(checkout) || !Files.isRegularFile(file)) return null
         return try {
+            // A link inside the checkout may lead out of it.
+            if (!file.toRealPath().startsWith(checkout.toRealPath())) return null
             Files.readString(file)
         } catch (_: IOException) {
             null
