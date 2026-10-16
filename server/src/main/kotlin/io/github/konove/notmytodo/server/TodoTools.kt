@@ -123,6 +123,8 @@ class TodoTools(val workspace: Workspace) {
         blockedBy: String? = null, duplicateOf: String? = null, parent: String? = null, source: String? = null,
         toDecide: String? = null, effort: String? = null, full: Boolean = false, project: String? = null,
     ): String {
+        // Checked before the project is made, so that a first create that fails makes none.
+        checkNew(title, priority, effort, path, startLine, endLine, places)
         val scope = found { workspace.scope(project, create = true)!! }
         val reply = Call(scope, workspace).create(title, details, priority, tags, path, startLine, endLine, places, blockedBy, duplicateOf, parent, source, toDecide, effort, full)
         return scope.notice?.let { notice -> noted(reply, notice) } ?: reply
@@ -139,8 +141,11 @@ class TodoTools(val workspace: Workspace) {
     }
 
     fun batch(items: String, project: String? = null): String {
-        val scope = found { workspace.scope(project, create = true)!! }
-        val reply = Call(scope, workspace).batch(items)
+        val entries = entries(items)
+        // Only a new item makes a project: in a folder with none there is no item to change.
+        val scope = found { workspace.scope(project, create = entries.any { !it.has("id") }, inbox = true) }
+            ?: throw ToolError("there is no item to change: ${project?.trim()?.takeIf { it.isNotEmpty() } ?: workspace.cwd} has no project yet")
+        val reply = Call(scope, workspace).batch(entries)
         return scope.notice?.let { "$it\n$reply" } ?: reply
     }
 
@@ -294,11 +299,8 @@ private class Call(private val scope: Scope, private val workspace: Workspace) {
         path: String?, startLine: Int?, endLine: Int?, places: String?,
         blockedBy: String?, duplicateOf: String?, parent: String?, source: String?, toDecide: String?, effort: String?,
     ): Draft {
-        if (title.isBlank()) throw ToolError("title must not be empty")
+        checkNew(title, priority, effort, path, startLine, endLine, places)
         val parsedPriority = priority?.let(::parsePriority) ?: Priority.P2
-        if (path == null && (startLine != null || endLine != null)) {
-            throw ToolError("path is required when startLine or endLine is given")
-        }
         val first = path?.let { buildAnchor(Place(filePath(it), startLine, endLine)) }
         val anchors = (listOfNotNull(first) + parsePlaces(places).map(::buildAnchor)).distinctBy(Anchor::place)
         val draft = Draft(
@@ -424,17 +426,11 @@ private class Call(private val scope: Scope, private val workspace: Workspace) {
     }
 
     /**
-     * Creates and updates several items as one change. [items] is a JSON array of objects: one with
-     * an id changes that item, one without is a new item. Nothing is saved when an entry is wrong.
-     * A new item may carry a ref, and the entries after it name it as `$ref` where they take an id.
+     * Creates and updates several items as one change, one for each of [entries], which have been
+     * [checked]: one with an id changes that item, one without is a new item. Nothing is saved when an
+     * entry is wrong. A new item may carry a ref, and the entries after it name it as `$ref` where they take an id.
      */
-    fun batch(items: String): String {
-        val entries = try {
-            JsonParser.parseString(items).takeIf { it.isJsonArray }?.asJsonArray
-        } catch (_: JsonParseException) {
-            null
-        } ?: throw ToolError("items must be a JSON array of objects, for example [{\"title\": \"...\"}, {\"id\": \"T-3\", \"tags\": \"...\"}]")
-        if (entries.isEmpty) throw ToolError("items is empty: pass at least one object")
+    fun batch(entries: List<JsonObject>): String {
         // Every entry is read before the first is saved, and the files of new items with it.
         val refs = HashMap<String, String>()
         val changes = entries.mapIndexed { index, entry -> inEntry(index) { change(entry, refs) } }
@@ -445,62 +441,31 @@ private class Call(private val scope: Scope, private val workspace: Workspace) {
         return rows(asNow(saved).map { compactRow(it, links) })
     }
 
-    private fun <T> inEntry(index: Int, block: () -> T): T = try {
-        block()
-    } catch (e: ToolError) {
-        throw ToolError("entry ${index + 1}: ${e.message}")
-    }
-
     /** The change one entry of a batch makes. [refs] are the ids of the new items made so far, by their ref. */
-    private fun change(entry: JsonElement, refs: MutableMap<String, String>): (ItemStore.Batch) -> TodoItem {
-        if (!entry.isJsonObject) throw ToolError("must be a JSON object")
-        val o = entry.asJsonObject
+    private fun change(o: JsonObject, refs: MutableMap<String, String>): (ItemStore.Batch) -> TodoItem {
         val updates = o.has("id")
-        val known = if (updates) UPDATE_FIELDS else CREATE_FIELDS
-        o.keySet().firstOrNull { it !in known }?.let { field ->
-            throw ToolError(
-                when {
-                    updates && field == "ref" -> "ref is for a new item: an item that is there is named by its id"
-                    !updates && field in UPDATE_FIELDS -> "$field cannot be set on a new item: leave it out, or give an id to change an item"
-                    else -> "unknown field $field: ${if (updates) "an item to change" else "a new item"} takes ${known.joinToString(", ")}"
-                }
-            )
-        }
-        fun text(field: String): String? = o.get(field)?.takeUnless { it.isJsonNull }?.let { value ->
-            when {
-                value.isJsonPrimitive && value.asJsonPrimitive.isString -> value.asString
-                // Lists are written as an array as readily as a text.
-                value.isJsonArray && field in LIST_FIELDS && value.asJsonArray.all { it.isJsonPrimitive } ->
-                    value.asJsonArray.joinToString(",") { it.asString }
-                else -> throw ToolError("$field must be a text")
-            }
-        }
-        fun line(field: String): Int? = o.get(field)?.takeUnless { it.isJsonNull }?.let { value ->
-            value.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isNumber }?.asString?.toIntOrNull()
-                ?: throw ToolError("$field must be a whole number")
-        }
         // The links are read when the entry is applied: only then do the new items before it have ids.
-        val blockedBy = text("blockedBy")
-        val duplicateOf = text("duplicateOf")
-        val parent = text("parent")
+        val blockedBy = o.text("blockedBy")
+        val duplicateOf = o.text("duplicateOf")
+        val parent = o.text("parent")
         fun resolved(link: String?): String? = link?.replace(REF) { match ->
             refs[match.groupValues[1]] ?: throw ToolError("there is no new item with ref \"${match.groupValues[1]}\" before this entry")
         }
         if (updates) {
-            val ref = ItemRef.parse(text("id") ?: throw ToolError("id must be a text"))
+            val ref = ItemRef.parse(o.text("id") ?: throw ToolError("id must be a text"))
                 ?: throw ToolError("id is not an item id: write T-1, T-2, ... or project/T-1")
             if (ref.project != null && ref.project != scope.key) {
                 throw ToolError("${ref} is in project ${ref.project}: a batch changes the items of one project, ${scope.key}")
             }
             val id = ref.id
             val edit = edit(
-                text("title"), text("details"), text("priority"), text("tags"), text("status"),
-                source = text("source"), fixedIn = text("fixedIn"), resolution = text("resolution"), toDecide = text("toDecide"),
-                effort = text("effort"),
+                o.text("title"), o.text("details"), o.text("priority"), o.text("tags"), o.text("status"),
+                source = o.text("source"), fixedIn = o.text("fixedIn"), resolution = o.text("resolution"), toDecide = o.text("toDecide"),
+                effort = o.text("effort"),
             )
-            val anchors = placed(id, text("path"), line("startLine"), line("endLine"), text("places"))
+            val anchors = placed(id, o.text("path"), o.line("startLine"), o.line("endLine"), o.text("places"))
             // In a batch, what the agent has to say about an item goes with the change, in the same write.
-            val comment = text("comment")
+            val comment = o.text("comment")
             if (comment != null && comment.isBlank()) throw ToolError("comment must not be empty")
             return { batch ->
                 val links = edit(blockedBy = resolved(blockedBy), duplicateOf = resolved(duplicateOf), parent = resolved(parent))
@@ -510,12 +475,12 @@ private class Call(private val scope: Scope, private val workspace: Workspace) {
                 if (comment == null) saved else batch.comment(id, Author.AGENT, comment)
             }
         }
-        val ref = text("ref")
+        val ref = o.text("ref")
         if (ref != null && !REF_NAME.matches(ref)) throw ToolError("ref must be a name made of letters, digits, - and _")
         val draft = draft(
-            text("title") ?: throw ToolError("title is required for a new item"), text("details"), text("priority"),
-            text("tags"), text("path"), line("startLine"), line("endLine"), text("places"),
-            null, null, null, text("source"), text("toDecide"), text("effort"),
+            o.text("title") ?: throw ToolError("title is required for a new item"), o.text("details"), o.text("priority"),
+            o.text("tags"), o.text("path"), o.line("startLine"), o.line("endLine"), o.text("places"),
+            null, null, null, o.text("source"), o.text("toDecide"), o.text("effort"),
         )
         return { batch ->
             if (ref != null && ref in refs) throw ToolError("ref \"$ref\" is already the name of an entry before this one")
@@ -596,29 +561,6 @@ private class Call(private val scope: Scope, private val workspace: Workspace) {
         }.orEmpty()
         return Decision(text("question"), options, text("answer"), "")
     }
-
-    /** A place as a tool is given it: a file, with lines or, for the whole file, without. */
-    private data class Place(val path: String, val startLine: Int?, val endLine: Int?) {
-        fun isAt(anchor: Anchor): Boolean = anchor.path == path &&
-            if (startLine == null) anchor.isFile else anchor.startLine == startLine && anchor.endLine == (endLine ?: startLine)
-    }
-
-    /** Reads places written `path`, `path:12` or `path:12-20`, separated by commas or line breaks. */
-    private fun parsePlaces(places: String?): List<Place> =
-        places.orEmpty().split(Regex("[,\\r\\n]+")).map { it.trim() }.filter { it.isNotEmpty() }.map { entry ->
-            val lines = Regex("^(.+):(\\d+)(?:-(\\d+))?$").matchEntire(entry)
-            when {
-                lines != null -> {
-                    val (file, start, end) = lines.destructured
-                    Place(filePath(file), start.toIntOrNull() ?: badPlace(entry), if (end.isEmpty()) null else end.toIntOrNull() ?: badPlace(entry))
-                }
-                ':' in entry -> badPlace(entry)
-                else -> Place(filePath(entry), null, null)
-            }
-        }
-
-    private fun badPlace(entry: String): Nothing =
-        throw ToolError("\"$entry\" is not a place: write path, path:12 or path:12-20")
 
     private fun buildAnchor(place: Place): Anchor {
         val path = place.path
@@ -748,24 +690,6 @@ private class Call(private val scope: Scope, private val workspace: Workspace) {
     private fun isUnder(file: String, directory: String): Boolean =
         directory.isEmpty() || file == directory || file.startsWith("$directory/")
 
-    /**
-     * A file as anchors spell it: forward slashes, relative to the project root, with `.` and `..` worked
-     * out. An absolute path is left as it is, for the read to refuse; so is a `..` that leads out.
-     */
-    private fun filePath(path: String): String {
-        val slashed = path.trim().replace('\\', '/')
-        if (slashed.startsWith("/")) return slashed
-        val parts = ArrayList<String>()
-        for (part in slashed.split('/')) {
-            when {
-                part.isEmpty() || part == "." -> {}
-                part == ".." && parts.isNotEmpty() && parts.last() != ".." -> parts.removeAt(parts.lastIndex)
-                else -> parts += part
-            }
-        }
-        return parts.joinToString("/")
-    }
-
     private fun item(id: String): TodoItem =
         readable().firstOrNull { it.id == id } ?: throw ToolError("there is no item with id $id")
 
@@ -804,26 +728,139 @@ private class Call(private val scope: Scope, private val workspace: Workspace) {
     private fun parseRef(value: String): ItemRef =
         ItemRef.parse(value) ?: throw ToolError("\"${value.trim()}\" is not an item id: write T-1, T-2, ... or project/T-1")
 
-    private fun parsePriority(value: String): Priority =
-        Priority.fromJson(value) ?: throw ToolError("priority must be one of p1, p2, p3")
-
-    private fun parseEffort(value: String): Effort =
-        Effort.fromJson(value) ?: throw ToolError("effort must be one of s, m, l")
-
     private fun parseStatus(value: String): Status =
         Status.fromJson(value) ?: throw ToolError("status must be one of open, in_progress, fixed, done, wont_fix")
 
     private companion object {
-        val PLACE_FIELDS = setOf("path", "startLine", "endLine", "places")
-        val LIST_FIELDS = setOf("tags", "blockedBy", "places")
         val DECISION_FIELDS = setOf("question", "options", "answer")
-        val CREATE_FIELDS = setOf("title", "details", "priority", "tags") + PLACE_FIELDS +
-            setOf("blockedBy", "duplicateOf", "parent", "source", "toDecide", "effort", "ref")
-        val UPDATE_FIELDS = setOf("id", "title", "details", "priority", "tags", "status") + PLACE_FIELDS + setOf(
-            "blockedBy", "duplicateOf", "parent", "source", "fixedIn", "resolution", "toDecide", "effort", "comment",
-        )
         val REF_NAME = Regex("[A-Za-z0-9_-]+")
         val REF = Regex("\\$(${REF_NAME.pattern})")
         val RANGE = Regex("(\\S+?)(\\.{2,3})(\\S+)")
     }
 }
+
+/**
+ * Refuses a new item whose fields are wrong in a way that shows without the store; its files are
+ * read later, in its project. A first create or batch is checked so before its project is made.
+ */
+private fun checkNew(title: String, priority: String?, effort: String?, path: String?, startLine: Int?, endLine: Int?, places: String?) {
+    if (title.isBlank()) throw ToolError("title must not be empty")
+    priority?.let(::parsePriority)
+    effort?.takeIf { it.isNotBlank() }?.let(::parseEffort)
+    if (path == null && (startLine != null || endLine != null)) {
+        throw ToolError("path is required when startLine or endLine is given")
+    }
+    if (startLine == null && endLine != null) throw ToolError("startLine is required when endLine is given")
+    parsePlaces(places)
+}
+
+/** The entries of a batch, each checked as far as it can be without the store. */
+private fun entries(items: String): List<JsonObject> {
+    val entries = try {
+        JsonParser.parseString(items).takeIf { it.isJsonArray }?.asJsonArray
+    } catch (_: JsonParseException) {
+        null
+    } ?: throw ToolError("items must be a JSON array of objects, for example [{\"title\": \"...\"}, {\"id\": \"T-3\", \"tags\": \"...\"}]")
+    if (entries.isEmpty) throw ToolError("items is empty: pass at least one object")
+    return entries.mapIndexed { index, entry -> inEntry(index) { checked(entry) } }
+}
+
+/** [entry] of a batch as an object with the fields its kind takes, and a new item's fields as [checkNew] wants them. */
+private fun checked(entry: JsonElement): JsonObject {
+    if (!entry.isJsonObject) throw ToolError("must be a JSON object")
+    val o = entry.asJsonObject
+    val updates = o.has("id")
+    val known = if (updates) UPDATE_FIELDS else CREATE_FIELDS
+    o.keySet().firstOrNull { it !in known }?.let { field ->
+        throw ToolError(
+            when {
+                updates && field == "ref" -> "ref is for a new item: an item that is there is named by its id"
+                !updates && field in UPDATE_FIELDS -> "$field cannot be set on a new item: leave it out, or give an id to change an item"
+                else -> "unknown field $field: ${if (updates) "an item to change" else "a new item"} takes ${known.joinToString(", ")}"
+            }
+        )
+    }
+    if (!updates) {
+        checkNew(
+            o.text("title") ?: throw ToolError("title is required for a new item"), o.text("priority"), o.text("effort"),
+            o.text("path"), o.line("startLine"), o.line("endLine"), o.text("places"),
+        )
+    }
+    return o
+}
+
+private fun <T> inEntry(index: Int, block: () -> T): T = try {
+    block()
+} catch (e: ToolError) {
+    throw ToolError("entry ${index + 1}: ${e.message}")
+}
+
+private fun JsonObject.text(field: String): String? = get(field)?.takeUnless { it.isJsonNull }?.let { value ->
+    when {
+        value.isJsonPrimitive && value.asJsonPrimitive.isString -> value.asString
+        // Lists are written as an array as readily as a text.
+        value.isJsonArray && field in LIST_FIELDS && value.asJsonArray.all { it.isJsonPrimitive } ->
+            value.asJsonArray.joinToString(",") { it.asString }
+        else -> throw ToolError("$field must be a text")
+    }
+}
+
+private fun JsonObject.line(field: String): Int? = get(field)?.takeUnless { it.isJsonNull }?.let { value ->
+    value.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isNumber }?.asString?.toIntOrNull()
+        ?: throw ToolError("$field must be a whole number")
+}
+
+/** A place as a tool is given it: a file, with lines or, for the whole file, without. */
+private data class Place(val path: String, val startLine: Int?, val endLine: Int?) {
+    fun isAt(anchor: Anchor): Boolean = anchor.path == path &&
+        if (startLine == null) anchor.isFile else anchor.startLine == startLine && anchor.endLine == (endLine ?: startLine)
+}
+
+/** Reads places written `path`, `path:12` or `path:12-20`, separated by commas or line breaks. */
+private fun parsePlaces(places: String?): List<Place> =
+    places.orEmpty().split(Regex("[,\\r\\n]+")).map { it.trim() }.filter { it.isNotEmpty() }.map { entry ->
+        val lines = Regex("^(.+):(\\d+)(?:-(\\d+))?$").matchEntire(entry)
+        when {
+            lines != null -> {
+                val (file, start, end) = lines.destructured
+                Place(filePath(file), start.toIntOrNull() ?: badPlace(entry), if (end.isEmpty()) null else end.toIntOrNull() ?: badPlace(entry))
+            }
+            ':' in entry -> badPlace(entry)
+            else -> Place(filePath(entry), null, null)
+        }
+    }
+
+private fun badPlace(entry: String): Nothing =
+    throw ToolError("\"$entry\" is not a place: write path, path:12 or path:12-20")
+
+/**
+ * A file as anchors spell it: forward slashes, relative to the project root, with `.` and `..` worked
+ * out. An absolute path is left as it is, for the read to refuse; so is a `..` that leads out.
+ */
+private fun filePath(path: String): String {
+    val slashed = path.trim().replace('\\', '/')
+    if (slashed.startsWith("/")) return slashed
+    val parts = ArrayList<String>()
+    for (part in slashed.split('/')) {
+        when {
+            part.isEmpty() || part == "." -> {}
+            part == ".." && parts.isNotEmpty() && parts.last() != ".." -> parts.removeAt(parts.lastIndex)
+            else -> parts += part
+        }
+    }
+    return parts.joinToString("/")
+}
+
+private fun parsePriority(value: String): Priority =
+    Priority.fromJson(value) ?: throw ToolError("priority must be one of p1, p2, p3")
+
+private fun parseEffort(value: String): Effort =
+    Effort.fromJson(value) ?: throw ToolError("effort must be one of s, m, l")
+
+private val PLACE_FIELDS = setOf("path", "startLine", "endLine", "places")
+private val LIST_FIELDS = setOf("tags", "blockedBy", "places")
+private val CREATE_FIELDS = setOf("title", "details", "priority", "tags") + PLACE_FIELDS +
+    setOf("blockedBy", "duplicateOf", "parent", "source", "toDecide", "effort", "ref")
+private val UPDATE_FIELDS = setOf("id", "title", "details", "priority", "tags", "status") + PLACE_FIELDS + setOf(
+    "blockedBy", "duplicateOf", "parent", "source", "fixedIn", "resolution", "toDecide", "effort", "comment",
+)

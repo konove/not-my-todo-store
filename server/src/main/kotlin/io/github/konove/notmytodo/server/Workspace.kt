@@ -27,12 +27,10 @@ class Workspace(val store: Store, val cwd: Path) {
 
     /**
      * The project a tool works in: [project] when given (a key, inbox or a folder), else the one of
-     * [cwd]. Null when that folder has no project yet, unless [create], which makes it.
+     * [cwd]. Null when that folder has no project yet, unless [create], which makes it. With [inbox],
+     * the home folder and / give inbox, where an item made there was filed.
      */
-    fun scope(project: String?, create: Boolean = false): Scope? = scope(project, create, inbox = false)
-
-    /** As [scope]; with [inbox], the home folder and / give inbox, where an item made there was filed. */
-    private fun scope(project: String?, create: Boolean, inbox: Boolean): Scope? {
+    fun scope(project: String?, create: Boolean = false, inbox: Boolean = false): Scope? {
         val wanted = project?.trim()?.takeIf { it.isNotEmpty() }
         val resolution = when {
             wanted == null -> here()

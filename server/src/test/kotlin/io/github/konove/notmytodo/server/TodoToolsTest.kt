@@ -1088,4 +1088,22 @@ class TodoToolsTest {
         assertEquals(ImportResult.Imported(1), Import.run(stores, key, file))
         assertEquals("T-2", JsonParser.parseString(inOld.create("next", null, null, null, null, null, null)).asJsonObject.get("id").asString)
     }
+
+    @Test
+    fun `a first create or batch with bad input makes no project`() {
+        val fresh = TempRepo.create(tmp.resolve("fresh"), "git@github.com:me/fresh.git")
+        val inFresh = TodoTools(Workspace(stores, fresh))
+        failsWith("title") { inFresh.create("  ", null, null, null, null, null, null) }
+        failsWith("path") { inFresh.create("x", null, null, null, null, 2, null) }
+        failsWith("startLine") { inFresh.create("x", null, null, null, "a.txt", null, 2) }
+        failsWith("a.txt:two") { inFresh.create("x", null, null, null, null, null, null, "a.txt:two") }
+        failsWith("priority") { inFresh.create("x", null, "urgent", null, null, null, null) }
+        assertNull(stores.project("fresh"))
+        failsWith("entry 2: title") { inFresh.batch("""[{"title": "x"}, {"title": " "}]""") }
+        failsWith("entry 1: unknown field colour") { inFresh.batch("""[{"title": "x", "colour": "red"}]""") }
+        failsWith("no project yet") { inFresh.batch("""[{"id": "T-1", "tags": "x"}]""") }
+        assertNull(stores.project("fresh"))
+        val reply = JsonParser.parseString(inFresh.create("first", null, null, null, null, null, null)).asJsonObject
+        assertEquals("created project \"fresh\" for $fresh", reply.get("notice").asString)
+    }
 }
