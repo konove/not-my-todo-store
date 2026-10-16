@@ -3,6 +3,7 @@ package io.github.konove.notmytodo.store
 import java.io.IOException
 import java.nio.channels.FileChannel
 import java.nio.channels.FileLock
+import java.nio.channels.OverlappingFileLockException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
@@ -17,7 +18,7 @@ import java.util.concurrent.locks.ReentrantLock
  * file. A thread that holds it may take it again.
  */
 class StoreLock(file: Path, private val timeoutMs: Long = 5000) {
-    private val file: Path = file.toAbsolutePath().normalize()
+    private val file: Path = realPath(file.toAbsolutePath().normalize())
     private val shared: Shared = SHARED.computeIfAbsent(this.file) { Shared() }
 
     private class Shared {
@@ -49,23 +50,28 @@ class StoreLock(file: Path, private val timeoutMs: Long = 5000) {
         } catch (e: IOException) {
             throw StoreException("$file cannot be opened: ${e.message}")
         }
-        while (true) {
-            val lock = try {
-                channel.tryLock()
-            } catch (e: IOException) {
-                channel.close()
-                throw StoreException("$file cannot be locked: ${e.message}")
+        try {
+            while (true) {
+                val lock = try {
+                    channel.tryLock()
+                } catch (e: IOException) {
+                    throw StoreException("$file cannot be locked: ${e.message}")
+                } catch (e: OverlappingFileLockException) {
+                    throw StoreException("$file is locked through another path in this process")
+                }
+                if (lock != null) {
+                    shared.channel = channel
+                    shared.held = lock
+                    return
+                }
+                if (System.nanoTime() >= deadline) throw locked()
+                Thread.sleep(POLL_MS)
             }
-            if (lock != null) {
-                shared.channel = channel
-                shared.held = lock
-                return
-            }
-            if (System.nanoTime() >= deadline) {
-                channel.close()
-                throw locked()
-            }
-            Thread.sleep(POLL_MS)
+        } catch (t: Throwable) {
+            // Closing a channel drops every OS lock this process holds on the file, so the
+            // channel must not outlive a failed wait.
+            channel.close()
+            throw t
         }
     }
 
@@ -87,5 +93,17 @@ class StoreLock(file: Path, private val timeoutMs: Long = 5000) {
     private companion object {
         const val POLL_MS = 20L
         val SHARED = ConcurrentHashMap<Path, Shared>()
+
+        /**
+         * Two spellings of one file (a symlinked root, a relative path) must share one thread lock,
+         * or the same process would lock the file twice through two channels. Without a real path
+         * the absolute one is used, and the open in [acquire] reports the failure.
+         */
+        fun realPath(file: Path): Path = try {
+            Files.createDirectories(file.parent)
+            file.parent.toRealPath().resolve(file.fileName)
+        } catch (_: IOException) {
+            file
+        }
     }
 }
