@@ -31,6 +31,12 @@ class FixCommitsTest {
     }
 
     @Test
+    fun `an item of another project is not read as one of this project`() {
+        assertEquals(emptyMap<String, String>(), FixCommits.parse(log("bbb2222" to "Fix infra/T-3 and web/T-3")))
+        assertEquals(mapOf("T-3" to "aaa1111"), FixCommits.parse(log("bbb2222" to "Fix infra/T-3", "aaa1111" to "Fix T-3")))
+    }
+
+    @Test
     fun `the commit that names an item is read from the checkout`() {
         val repo = TempRepo.create(Files.createTempDirectory("nmt-fix").resolve("r"))
         TempRepo.commit(repo, "Fix T-3: the thing")

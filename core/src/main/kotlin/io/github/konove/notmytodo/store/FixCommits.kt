@@ -66,7 +66,8 @@ class FixCommits(private val root: Path, private val git: Git) {
         private const val FIELD = "%x1f"
         private const val RECORD = "%x1e"
         private val ID_LIKE = Regex("[0-9a-fA-F]{7,40}")
-        private val ID = Regex("\\bT-[1-9][0-9]*\\b")
+        /** An id of this project: infra/T-12 names an item of another one. */
+        private val ID = Regex("(?<![\\w/])T-[1-9][0-9]*\\b")
 
         /** The commit of each item id named in [log], which is the output of `git log`, newest commit first. */
         fun parse(log: String): Map<String, String> {
