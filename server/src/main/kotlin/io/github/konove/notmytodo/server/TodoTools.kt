@@ -540,14 +540,18 @@ private class Call(private val scope: Scope, private val workspace: Workspace) {
                     refuse("it was made by the user, and only the user deletes it. Close it with status \"wont_fix\" and a resolution instead")
                 }
                 val others = all.filter { it.id != item.id }
+                // An item of another project names this one by its qualified id, and is named by its own.
+                val ref = "${scope.key}/${item.id}"
+                val elsewhere = workspace.store.projects().filter { it.key != scope.key }
+                    .flatMap { p -> workspace.store.items(p.key).items.map { it.copy(id = "${p.key}/${it.id}") } }
                 fun ids(items: List<TodoItem>) = items.joinToString(", ") { it.id }
                 others.filter { it.parent == item.id }.takeIf { it.isNotEmpty() }?.let {
                     refuse("it is the parent of ${ids(it)}. Delete those first, or take them out of it with parent \"\"")
                 }
-                others.filter { item.id in it.blockedBy }.takeIf { it.isNotEmpty() }?.let {
+                (others.filter { item.id in it.blockedBy } + elsewhere.filter { ref in it.blockedBy }).takeIf { it.isNotEmpty() }?.let {
                     refuse("${ids(it)} ${if (it.size == 1) "is" else "are"} blocked by it. Take that link away first")
                 }
-                others.filter { it.duplicateOf == item.id }.takeIf { it.isNotEmpty() }?.let {
+                (others.filter { it.duplicateOf == item.id } + elsewhere.filter { it.duplicateOf == ref }).takeIf { it.isNotEmpty() }?.let {
                     refuse("${ids(it)} ${if (it.size == 1) "is" else "are"} a duplicate of it. Take that link away first")
                 }
             }

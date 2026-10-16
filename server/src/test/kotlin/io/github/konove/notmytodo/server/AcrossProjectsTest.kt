@@ -1,6 +1,7 @@
 package io.github.konove.notmytodo.server
 
 import com.google.gson.JsonParser
+import io.github.konove.notmytodo.model.Author
 import io.github.konove.notmytodo.store.Draft
 import io.github.konove.notmytodo.store.Store
 import io.github.konove.notmytodo.store.TempRepo
@@ -90,6 +91,26 @@ class AcrossProjectsTest {
         assertTrue(full.last().has("unreadable"))
         val projects = JsonParser.parseString(tools.projects()).asJsonArray.map { it.asJsonObject }
         assertTrue(projects.any { it.get("key").asString == "bad" && it.has("error") })
+    }
+
+    @Test
+    fun `todo_delete refuses an item that an item of another project links to`() {
+        store.items("web").create(Draft("web two", author = Author.AGENT))
+        store.items("web").create(Draft("web three", author = Author.AGENT))
+        store.items("api").create(Draft("api three", blockedBy = listOf("web/T-2")))
+        store.items("api").create(Draft("api four", duplicateOf = "web/T-3"))
+        val tools = TodoTools(Workspace(store, web))
+        for ((id, link) in listOf("T-2" to "api/T-3 is blocked by it", "T-3" to "api/T-4 is a duplicate of it")) {
+            try {
+                tools.delete(id)
+                throw AssertionError("expected a ToolError")
+            } catch (e: ToolError) {
+                assertTrue(e.message, e.message!!.contains("$id cannot be deleted: $link"))
+            }
+        }
+        assertEquals(listOf("T-1", "T-2", "T-3"), store.items("web").items.map { it.id })
+        assertEquals(listOf("web/T-2"), store.items("api").find("T-3")!!.blockedBy)
+        assertEquals("web/T-3", store.items("api").find("T-4")!!.duplicateOf)
     }
 
     @Test
