@@ -131,7 +131,7 @@ class Store(
         // The project this folder's name would be the key of may be its own, unreadable now: another made beside it would split its items in two.
         val base = keyFor(root, emptySet())
         problem(base)?.let {
-            throw StoreException("${dir(base).path.resolve("project.json")} cannot be read ($it), and it may be the project of $root. Fix or delete project.json there.")
+            throw StoreException("${dir(base).path.resolve("project.json")} cannot be read ($it), and it may be the project of $root. Fix project.json there.")
         }
         val key = keyFor(root, folderNames())
         val record = ProjectRecord(key, again.remotes, listOf(root.toString()))

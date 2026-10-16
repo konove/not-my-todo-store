@@ -119,7 +119,7 @@ class StoreTest {
         Files.writeString(broken, "{ broken")
         val e = assertThrows(StoreException::class.java) { ensure(TempRepo.create(tmp.resolve("z/api"), "git@github.com:me/api.git")) }
         assertTrue(e.message!!, e.message!!.startsWith("$broken cannot be read ("))
-        assertTrue(e.message!!, e.message!!.endsWith("and it may be the project of ${tmp.resolve("z/api")}. Fix or delete project.json there."))
+        assertTrue(e.message!!, e.message!!.endsWith("and it may be the project of ${tmp.resolve("z/api")}. Fix project.json there."))
         assertEquals("{ broken", Files.readString(broken))
         assertFalse(Files.exists(store.root.resolve("projects/api-2")))
         assertTrue(store.problem("api")!!, store.problem("api")!!.startsWith("project.json is not valid JSON"))

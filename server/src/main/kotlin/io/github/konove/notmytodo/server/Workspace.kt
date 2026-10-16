@@ -85,7 +85,7 @@ class Workspace(val store: Store, val cwd: Path) {
         val why = store.problem(key) ?: return
         throw ToolError(
             "${store.dir(key).path.resolve("project.json")} cannot be read ($why), and it may be the project of $root. " +
-                "Fix or delete project.json there."
+                "Fix project.json there."
         )
     }
 
@@ -116,7 +116,7 @@ class Workspace(val store: Store, val cwd: Path) {
 
     private fun unknown(key: String): String {
         store.problem(key.lowercase())?.let {
-            return "${store.dir(key.lowercase()).path.resolve("project.json")} cannot be read ($it). Fix or delete project.json there."
+            return "${store.dir(key.lowercase()).path.resolve("project.json")} cannot be read ($it). Fix project.json there."
         }
         val keys = store.projects().map { it.key }
         return "there is no project \"$key\"" + if (keys.isEmpty()) "" else ": the projects are ${keys.joinToString(", ")} (see todo_projects)"

@@ -208,7 +208,7 @@ class TodoToolsTest {
     @Test
     fun `broken file is reported as a tool error`() {
         Files.writeString(tmp.resolve("store/projects/demo/project.json"), "{ broken")
-        failsWith("project.json") { tools.list(null, null, null, null) }
+        failsWith("Fix project.json there.") { tools.list(null, null, null, null) }
         failsWith("project.json") { tools.create("x", null, null, null, null, null, null) }
     }
 

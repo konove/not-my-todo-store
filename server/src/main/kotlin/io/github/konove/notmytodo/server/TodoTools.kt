@@ -694,7 +694,7 @@ private class Call(private val scope: Scope, private val workspace: Workspace) {
         readable().firstOrNull { it.id == id } ?: throw ToolError("there is no item with id $id")
 
     private fun readable(): List<TodoItem> {
-        store.error?.let { throw ToolError("${store.dir.path} cannot be read: $it. Fix or delete project.json there.") }
+        store.error?.let { throw ToolError("${store.dir.path} cannot be read: $it. Fix project.json there.") }
         return store.items
     }
 
