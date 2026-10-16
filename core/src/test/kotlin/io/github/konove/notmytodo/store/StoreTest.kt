@@ -3,10 +3,12 @@ package io.github.konove.notmytodo.store
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.TimeUnit
 
 class StoreTest {
     private val tmp: Path = Files.createTempDirectory("nmt-projects").toRealPath()
@@ -99,5 +101,52 @@ class StoreTest {
         assertNull(store.find("infra/T-2"))
         assertNull(store.find("nowhere/T-1"))
         assertNull(store.find("T-1"))
+    }
+
+    @Test
+    fun `a project folder whose project json is broken keeps its key and its file`() {
+        val broken = Files.createDirectories(store.root.resolve("projects/api")).resolve("project.json")
+        Files.writeString(broken, "{ broken")
+        val made = ensure(TempRepo.create(tmp.resolve("z/api"), "git@github.com:me/api.git"))
+        assertEquals("api-2", made.record.key)
+        assertEquals("{ broken", Files.readString(broken))
+    }
+
+    @Test
+    fun `an inbox whose project json is broken is not replaced`() {
+        val broken = Files.createDirectories(store.root.resolve("projects/inbox")).resolve("project.json")
+        Files.writeString(broken, "{ broken")
+        assertThrows(StoreException::class.java) { store.inbox() }
+        assertEquals("{ broken", Files.readString(broken))
+    }
+
+    @Test
+    fun `looking up a project that needs no change does not wait for the lock`() {
+        val repo = TempRepo.create(tmp.resolve("quiet"), "git@github.com:me/quiet.git")
+        ensure(repo)
+        val holder = Jvm.start("io.github.konove.notmytodo.store.LockHolderKt", store.root.resolve("store.lock").toString(), "3000")
+        assertEquals("held", holder.inputStream.bufferedReader().readLine())
+        val start = System.nanoTime()
+        assertEquals("quiet", store.resolve(repo).record!!.key)
+        assertTrue(System.nanoTime() - start < 1_000_000_000L)
+        assertTrue(holder.waitFor(10, TimeUnit.SECONDS))
+    }
+
+    @Test
+    fun `a symlinked home is still never a project`() {
+        val realHome = Files.createDirectories(tmp.resolve("realHome"))
+        val linkHome = Files.createSymbolicLink(tmp.resolve("linkHome"), realHome)
+        assertNull(Store(tmp.resolve("s2"), home = linkHome).resolve(realHome).root)
+        assertNull(Store(tmp.resolve("s3"), home = realHome).resolve(linkHome).root)
+    }
+
+    @Test
+    fun `a project written by a newer layout is found and left as it is`() {
+        val repo = TempRepo.create(tmp.resolve("new"), "git@github.com:me/web.git")
+        val file = Files.createDirectories(store.root.resolve("projects/web")).resolve("project.json")
+        Files.writeString(file, """{"version":2,"key":"web","remotes":["github.com/me/web"],"checkouts":["/no/such/dir"]}""")
+        val before = Files.readString(file)
+        assertEquals("web", store.resolve(repo).record!!.key)
+        assertEquals(before, Files.readString(file))
     }
 }

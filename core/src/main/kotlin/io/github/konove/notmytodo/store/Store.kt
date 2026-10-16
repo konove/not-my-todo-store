@@ -72,14 +72,14 @@ class Store(
     fun resolve(folder: Path): Resolution {
         val abs = folder.toAbsolutePath().normalize()
         val repo = git.root(abs)
-        val never = home.toAbsolutePath().normalize()
-        val root = (repo ?: abs).takeUnless { it == never || it.parent == null }
+        val candidate = repo ?: abs
+        val root = candidate.takeUnless { real(it) == real(home.toAbsolutePath().normalize()) || it.parent == null }
         val remotes = repo?.let(git::remotes).orEmpty()
         if (root == null) return Resolution(abs, null, remotes, null)
         val records = projects()
         val known = records.firstOrNull { root.toString() in it.checkouts }
-            ?: records.firstOrNull { r -> remotes.isNotEmpty() && r.remotes.any { it in remotes } }?.let { addCheckout(it.key, root) }
-        return Resolution(abs, root, remotes, known?.let { prune(it.key) })
+            ?: records.firstOrNull { r -> remotes.isNotEmpty() && r.remotes.any { it in remotes } }
+        return Resolution(abs, root, remotes, known?.let { tidy(it, root) })
     }
 
     /**
@@ -91,28 +91,62 @@ class Store(
         val root = resolution.root ?: return@withLock Ensured(inbox(), false)
         val again = resolve(resolution.folder)
         again.record?.let { return@withLock Ensured(it, false) }
-        val key = keyFor(root, projects().map { it.key }.toSet())
+        val key = keyFor(root, folderNames())
         val record = ProjectRecord(key, again.remotes, listOf(root.toString()))
         dir(key).writeRecord(record)
         Ensured(record, true)
     }
 
-    fun inbox(): ProjectRecord = project(INBOX) ?: lock.withLock {
-        project(INBOX) ?: ProjectRecord(INBOX).also { dir(INBOX).writeRecord(it) }
+    fun inbox(): ProjectRecord = readable(INBOX) ?: lock.withLock {
+        readable(INBOX) ?: ProjectRecord(INBOX).also { dir(INBOX).writeRecord(it) }
     }
+
+    /** The record of [key]; null when it has no project.json yet, an error when it has one that cannot be read. */
+    private fun readable(key: String): ProjectRecord? {
+        val dir = dir(key)
+        return try {
+            dir.readRecord()
+        } catch (e: TodoFormatException) {
+            throw unreadable(dir, e.message)
+        } catch (e: IOException) {
+            throw unreadable(dir, e.message)
+        }
+    }
+
+    private fun unreadable(dir: ProjectDir, why: String?) =
+        StoreException("${dir.path} cannot be read ($why); it is left as it is")
+
+    /** Every folder under projects, readable or not: a key is taken as long as its folder is there. */
+    private fun folderNames(): Set<String> {
+        if (!Files.isDirectory(projectsDir)) return emptySet()
+        return Files.list(projectsDir).use { s -> s.filter { Files.isDirectory(it) }.map { it.fileName.toString() }.toList() }.toSet()
+    }
+
+    private fun real(p: Path): Path = runCatching { p.toRealPath() }.getOrDefault(p)
 
     /** Changes project.json of [key] under the lock. */
     fun updateRecord(key: String, change: (ProjectRecord) -> ProjectRecord): ProjectRecord = lock.withLock {
         val now = dir(key).readRecord() ?: throw StoreException("there is no project $key")
+        if (now.version > ProjectJson.VERSION) {
+            throw StoreException(
+                "${dir(key).path} was written by a newer version of not-my-todo-store (layout ${now.version}): it can be read but not changed"
+            )
+        }
         change(now).also { if (it != now) dir(key).writeRecord(it) }
     }
 
-    private fun addCheckout(key: String, root: Path): ProjectRecord =
-        updateRecord(key) { if (root.toString() in it.checkouts) it else it.copy(checkouts = it.checkouts + root.toString()) }
-
-    /** The record of [key] without the checkouts that are gone from this machine. */
-    private fun prune(key: String): ProjectRecord =
-        updateRecord(key) { r -> r.copy(checkouts = r.checkouts.filter { Files.isDirectory(Path.of(it)) }) }
+    /**
+     * [record] with [root] among its checkouts and the checkouts gone from this machine dropped. The
+     * lock is taken only when something has to change, so a lookup that changes nothing never waits.
+     */
+    private fun tidy(record: ProjectRecord, root: Path): ProjectRecord {
+        if (record.version > ProjectJson.VERSION) return record
+        fun changed(r: ProjectRecord) = r.copy(
+            checkouts = (r.checkouts + root.toString()).distinct().filter { it == root.toString() || Files.isDirectory(Path.of(it)) },
+        )
+        if (changed(record) == record) return record
+        return updateRecord(record.key, ::changed)
+    }
 
     companion object {
         const val INBOX = "inbox"
