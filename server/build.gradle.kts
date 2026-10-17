@@ -6,22 +6,38 @@ plugins {
     application
 }
 
+/** The Java the server is compiled for and needs to run. */
+val serverJava = 21
+
 kotlin {
-    jvmToolchain(21)
+    jvmToolchain(serverJava)
 }
 
 repositories {
     mavenCentral()
 }
 
+// The entry point, compiled for Java 8 so that an older Java says it is too old instead of failing to load the server.
+val launcher: SourceSet by sourceSets.creating
+
+tasks.named<JavaCompile>(launcher.compileJavaTaskName) {
+    options.release.set(8)
+    options.compilerArgs.add("-Xlint:-options")
+}
+
+tasks.jar {
+    from(launcher.output)
+}
+
 dependencies {
     implementation(project(":core"))
     testImplementation(testFixtures(project(":core")))
+    testImplementation(launcher.output)
     testImplementation("junit:junit:4.13.2")
 }
 
 application {
-    mainClass.set("io.github.konove.notmytodo.server.MainKt")
+    mainClass.set("io.github.konove.notmytodo.server.Launcher")
     applicationName = "notmytodo-store"
 }
 
@@ -44,13 +60,25 @@ val appDir = File(storeRoot, "app")
 val windows = System.getProperty("os.name").lowercase().startsWith("windows")
 val startScript = File(appDir, "bin/notmytodo-store" + if (windows) ".bat" else "")
 
+/**
+ * The Java the server is registered to run with, whatever Java a session's shell has: the one running
+ * this build when it is new enough, else the toolchain's, which compiled the server.
+ */
+val registeredJava: Provider<String> =
+    if (JavaVersion.current().isCompatibleWith(JavaVersion.toVersion(serverJava))) {
+        provider { System.getProperty("java.home") }
+    } else {
+        javaToolchains.launcherFor { languageVersion.set(JavaLanguageVersion.of(serverJava)) }
+            .map { it.metadata.installationPath.asFile.path }
+    }
+
 val copyServer by tasks.registering(Sync::class) {
     description = "Copies the server to the store's app folder."
     from(tasks.installDist.map { it.destinationDir })
     into(appDir)
 }
 
-/** Registers the installed server with Claude Code for every project of this user. */
+/** Registers the installed server with Claude Code for every project of this user, to run with [javaHome]. */
 abstract class RegisterServer : DefaultTask() {
     @get:Inject
     abstract val exec: ExecOperations
@@ -58,9 +86,14 @@ abstract class RegisterServer : DefaultTask() {
     @get:Input
     abstract val script: Property<String>
 
+    @get:Input
+    abstract val javaHome: Property<String>
+
     @TaskAction
     fun register() {
-        val command = "claude mcp add --scope user notmytodo-store -- ${script.get()}"
+        // The name comes before -e, which would take it as a second variable.
+        val add = listOf("mcp", "add", "notmytodo-store", "--scope", "user", "-e", "JAVA_HOME=${javaHome.get()}", "--", script.get())
+        val command = "claude " + add.joinToString(" ") { if (it.contains(' ')) "\"$it\"" else it }
         val claude = System.getenv("PATH").orEmpty().split(File.pathSeparator)
             .flatMap { listOf(File(it, "claude"), File(it, "claude.cmd"), File(it, "claude.exe")) }
             .firstOrNull { it.canExecute() }
@@ -75,8 +108,8 @@ abstract class RegisterServer : DefaultTask() {
             standardOutput = ByteArrayOutputStream()
             errorOutput = ByteArrayOutputStream()
         }
-        exec.exec { commandLine(claude.path, "mcp", "add", "--scope", "user", "notmytodo-store", "--", script.get()) }
-        logger.lifecycle("Registered notmytodo-store: ${script.get()}")
+        exec.exec { commandLine(listOf(claude.path) + add) }
+        logger.lifecycle("Registered notmytodo-store: ${script.get()}, with Java ${javaHome.get()}")
     }
 }
 
@@ -85,4 +118,5 @@ tasks.register<RegisterServer>("installServer") {
     description = "Installs the server to the store's app folder and registers it with Claude Code."
     dependsOn(copyServer)
     script.set(startScript.path)
+    javaHome.set(registeredJava)
 }

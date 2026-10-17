@@ -6,15 +6,18 @@ TODO plugin for JetBrains IDEs is one client of the same store.
 
 ## Install
 
-Needs Java 21 or newer on `PATH` (or `JAVA_HOME`) and Claude Code.
+Needs Java 21 or newer and Claude Code.
 
 ```
 ./gradlew installServer
 ```
 
 This copies the server to `~/.local/share/not-my-todo-store/app` and runs
-`claude mcp add --scope user notmytodo-store -- <app>/bin/notmytodo-store`. Run it again after
-pulling changes.
+`claude mcp add notmytodo-store --scope user -e JAVA_HOME=<java> -- <app>/bin/notmytodo-store`.
+`<java>` is the Java running Gradle when it is 21 or newer, else the Java 21 the build compiled the
+server with, so the server does not depend on the Java of the shell a session was started from.
+Started with an older Java, the server says it needs Java 21 and exits. Run `installServer` again
+after pulling changes, or to change the Java.
 
 ## Where items are kept
 
