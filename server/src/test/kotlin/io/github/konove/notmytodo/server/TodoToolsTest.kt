@@ -768,8 +768,8 @@ class TodoToolsTest {
         store.create(Draft("named and still open"))
         store.create(Draft("says so itself"))
         store.create(Draft("never named"))
-        TempRepo.commit(repo, "Fix T-1: first try")
-        TempRepo.commit(repo, "Cache the path\n\nFixes T-1 and T-3, starts T-2. Not T-10.")
+        TempRepo.commit(repo, "Cache the path\n\nStarts T-1 and T-2.")
+        TempRepo.commit(repo, "Fix T-1, T-3: keep the path\n\nNot T-10.")
         val head = TempRepo.git(repo, "rev-parse", "--short", "HEAD").trim()
         tools.batch(
             """[{"id": "T-1", "status": "fixed"}, {"id": "T-3", "status": "done", "fixedIn": "abc1234"}, {"id": "T-4", "status": "fixed"}]"""
