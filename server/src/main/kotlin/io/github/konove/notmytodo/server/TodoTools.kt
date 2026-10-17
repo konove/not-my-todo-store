@@ -5,6 +5,7 @@ import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import com.google.gson.JsonParseException
 import com.google.gson.JsonParser
+import com.google.gson.JsonPrimitive
 import io.github.konove.notmytodo.anchor.AnchorResolver
 import io.github.konove.notmytodo.model.Anchor
 import io.github.konove.notmytodo.model.Author
@@ -468,7 +469,10 @@ private class Call(private val scope: Scope, private val workspace: Workspace) {
             // In a batch, what the agent has to say about an item goes with the change, in the same write.
             val comment = o.text("comment")
             if (comment != null && comment.isBlank()) throw ToolError("comment must not be empty")
+            val decisions = o.get("decisions")?.takeUnless { it.isJsonNull }?.let { decisions(it, "decision") }
             return { batch ->
+                // Recorded before the change, so that a toDecide passed with them makes the item wait again for what is still open.
+                decisions?.let { batch.decide(id, it) }
                 val links = edit(blockedBy = resolved(blockedBy), duplicateOf = resolved(duplicateOf), parent = resolved(parent))
                 val saved = batch.update(id) { old ->
                     links(edit(AnchorsNow.of(old, scope.checkout))).let { if (anchors == null) it else it.copy(anchors = anchors(it.anchors).distinctBy(Anchor::place)) }
@@ -533,18 +537,33 @@ private class Call(private val scope: Scope, private val workspace: Workspace) {
      * objects with a question, the options offered, if any, and the answer.
      */
     fun decided(id: String, decisions: String, full: Boolean = false): String {
+        val parsed = decisions(JsonPrimitive(decisions), "entry")
+        val before = item(parseId(id))
+        val saved = storeCall { store.decide(before.id, parsed) }
+        return reply(saved, full, changed(before, saved))
+    }
+
+    /**
+     * The decisions in [value]: a JSON array of objects, or a text that holds one. [each] is the word by
+     * which an error names one of them.
+     */
+    private fun decisions(value: JsonElement, each: String): List<Decision> {
         val entries = try {
-            JsonParser.parseString(decisions).takeIf { it.isJsonArray }?.asJsonArray
+            val array = if (value.isJsonPrimitive && value.asJsonPrimitive.isString) JsonParser.parseString(value.asString) else value
+            array.takeIf { it.isJsonArray }?.asJsonArray
         } catch (_: JsonParseException) {
             null
         } ?: throw ToolError(
             "decisions must be a JSON array of objects, for example [{\"question\": \"...\", \"options\": [\"...\", \"...\"], \"answer\": \"...\"}]"
         )
         if (entries.isEmpty) throw ToolError("decisions is empty: pass at least one object")
-        val parsed = entries.mapIndexed { index, entry -> inEntry(index) { decision(entry) } }
-        val before = item(parseId(id))
-        val saved = storeCall { store.decide(before.id, parsed) }
-        return reply(saved, full, changed(before, saved))
+        return entries.mapIndexed { index, entry ->
+            try {
+                decision(entry)
+            } catch (e: ToolError) {
+                throw ToolError("$each ${index + 1}: ${e.message}")
+            }
+        }
     }
 
     private fun decision(entry: JsonElement): Decision {
@@ -863,5 +882,5 @@ private val LIST_FIELDS = setOf("tags", "blockedBy", "places")
 private val CREATE_FIELDS = setOf("title", "details", "priority", "tags") + PLACE_FIELDS +
     setOf("blockedBy", "duplicateOf", "parent", "source", "toDecide", "effort", "ref")
 private val UPDATE_FIELDS = setOf("id", "title", "details", "priority", "tags", "status") + PLACE_FIELDS + setOf(
-    "blockedBy", "duplicateOf", "parent", "source", "fixedIn", "resolution", "toDecide", "effort", "comment",
+    "blockedBy", "duplicateOf", "parent", "source", "fixedIn", "resolution", "toDecide", "effort", "comment", "decisions",
 )

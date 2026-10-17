@@ -612,6 +612,40 @@ class TodoToolsTest {
     }
 
     @Test
+    fun `batch records decisions about several items`() {
+        store.create(Draft("pick a license", tags = listOf("needs-decision", "legal")))
+        store.create(Draft("pick a year", tags = listOf("needs-decision")))
+        store.create(Draft("pick both", tags = listOf("needs-decision")))
+        tools.batch(
+            """[{"id": "T-1", "decisions": [{"question": "Which license?", "options": ["MIT", "Apache 2.0"], "answer": "MIT"}]},
+                {"id": "T-2", "decisions": [{"question": "Year?", "answer": "2026"}], "status": "in_progress", "comment": "on it"},
+                {"id": "T-3", "decisions": [{"question": "License?", "answer": "MIT"}], "toDecide": "Which year?"}]"""
+        )
+        val license = store.find("T-1")!!
+        assertEquals(listOf("Which license?" to "MIT"), license.decisions.map { it.question to it.answer })
+        assertEquals(listOf("MIT", "Apache 2.0"), license.decisions[0].options)
+        assertEquals(listOf("legal"), license.tags)
+        val year = store.find("T-2")!!
+        assertEquals(listOf("2026"), year.decisions.map { it.answer })
+        assertFalse(year.needsDecision)
+        assertEquals(Status.IN_PROGRESS, year.status)
+        assertEquals(listOf("on it"), year.comments.map { it.text })
+        // What is still open makes the item wait again.
+        val both = store.find("T-3")!!
+        assertEquals(1, both.decisions.size)
+        assertTrue(both.needsDecision)
+
+        val before = onDisk()
+        failsWith("entry 2: decision 1: answer") {
+            tools.batch("""[{"id": "T-1", "decisions": [{"question": "q", "answer": "a"}]}, {"id": "T-2", "decisions": [{"question": "q"}]}]""")
+        }
+        failsWith("entry 1: decisions is empty") { tools.batch("""[{"id": "T-1", "decisions": []}]""") }
+        failsWith("entry 1: decisions must be a JSON array") { tools.batch("""[{"id": "T-1", "decisions": {"question": "q", "answer": "a"}}]""") }
+        failsWith("decisions cannot be set on a new item") { tools.batch("""[{"title": "new", "decisions": [{"question": "q", "answer": "a"}]}]""") }
+        assertEquals(before, onDisk())
+    }
+
+    @Test
     fun `effort is set, changed, taken away and listed`() {
         val made = JsonParser.parseString(tools.create("a", null, null, null, null, null, null, effort = "S")).asJsonObject
         assertEquals("s", made.get("effort").asString)

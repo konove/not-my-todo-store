@@ -125,6 +125,8 @@ class ItemStore(
 
         fun comment(id: String, author: Author, text: String): TodoItem = update(id, change = commented(author, text))
 
+        fun decide(id: String, decisions: List<Decision>): TodoItem = update(id, change = decided(decisions))
+
         /** Adds [item] as it is, with its id: for items brought from elsewhere, whose links are already right. */
         fun put(item: TodoItem) {
             if (file.items.any { it.id == item.id }) throw StoreException("there already is an item with id ${item.id}")
@@ -259,7 +261,9 @@ class ItemStore(
      * Adds what I was asked and what I answered to the end of the item's decisions, with the time.
      * The item no longer waits for me: its [Tags.NEEDS_DECISION] tag goes, and what was to be decided stays.
      */
-    fun decide(id: String, decisions: List<Decision>): TodoItem {
+    fun decide(id: String, decisions: List<Decision>): TodoItem = update(id, change = decided(decisions))
+
+    private fun decided(decisions: List<Decision>): (TodoItem) -> TodoItem {
         if (decisions.isEmpty()) throw StoreException("there must be at least one decision")
         val now = timestamp()
         val added = decisions.map { d ->
@@ -269,7 +273,7 @@ class ItemStore(
             if (answer.isEmpty()) throw StoreException("the answer must not be empty")
             Decision(question, d.options.map { it.trim() }.filter { it.isNotEmpty() }, answer, now)
         }
-        return update(id) { it.copy(decisions = it.decisions + added, tags = it.tags - Tags.NEEDS_DECISION) }
+        return { it.copy(decisions = it.decisions + added, tags = it.tags - Tags.NEEDS_DECISION) }
     }
 
     /**

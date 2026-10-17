@@ -161,7 +161,8 @@ object TodoToolSpecs {
                 "re-tag, re-prioritise or close many items, instead of calling todo_create or todo_update for each or editing " +
                 "the items file. items is an array of objects. An object with an id changes that item and takes the " +
                 "fields of todo_update, path, startLine, endLine and places to re-attach it among them, and comment as well, which adds a comment " +
-                "as todo_comment does; an object without an id is a new item " +
+                "as todo_comment does, and decisions, which records what the user decided as todo_decided does, before the other fields are applied: " +
+                "so after asking the user about several items, one call records every answer. An object without an id is a new item " +
                 "and takes the fields of todo_create, and ref as well: a name of your choosing by which the entries after it " +
                 "name the new item, written \"\$ref\" (a \$ and the name), in parent, blockedBy and duplicateOf. So one call files a whole item and its parts. " +
                 "The entries are applied in order, and when one is wrong none is saved " +
@@ -176,7 +177,8 @@ object TodoToolSpecs {
                         "{\"title\": \"Cache the index\", \"parent\": \"\$whole\", \"priority\": \"p3\", \"effort\": \"s\", \"tags\": \"perf\", " +
                         "\"path\": \"src/Index.kt\", \"startLine\": 12}, {\"id\": \"T-3\", \"tags\": \"perf mcp\", \"blockedBy\": \"\$whole\"}, " +
                         "{\"id\": \"T-4\", \"status\": \"wont_fix\", \"resolution\": \"...\"}, " +
-                        "{\"id\": \"T-5\", \"toDecide\": \"Which of the two?\"}, {\"id\": \"T-6\", \"path\": \"src/Moved.kt\", \"startLine\": 40}]",
+                        "{\"id\": \"T-5\", \"toDecide\": \"Which of the two?\"}, {\"id\": \"T-6\", \"path\": \"src/Moved.kt\", \"startLine\": 40}, " +
+                        "{\"id\": \"T-7\", \"decisions\": [{\"question\": \"Which license?\", \"options\": [\"MIT\", \"Apache 2.0\"], \"answer\": \"MIT\"}]}]",
                     required = true,
                 ),
                 Param("project", ParamType.STRING, PROJECT),
@@ -189,7 +191,7 @@ object TodoToolSpecs {
                 "answers are appended to the item's decisions with the time, and the needs-decision tag is taken away: the item no longer " +
                 "waits for the user, so there is no need to pass tags to todo_update afterwards. toDecide stays as the record of what was asked. " +
                 "When the user answered only some of the questions, pass what is still open as toDecide to todo_update, which makes the item wait again. " +
-                "The status is not changed. " +
+                "The status is not changed. To record the answers about several items in one call, pass decisions on their entries of todo_batch. " +
                 "Returns one line with the id, title, priority, effort, status, tags and \"at\" (path:lines of each anchor) of the item as saved, " +
                 "lost when an anchor is lost, and parts when it has parts, as todo_list compact=true shows it, and changed, the names of the fields that changed; pass full=true for the whole item as JSON.",
             listOf(
