@@ -12,15 +12,28 @@ class FixCommitsTest {
     private fun log(vararg commits: Pair<String, String>) = commits.joinToString("") { (hash, message) -> "$hash\u001f$message\n\u001e\n" }
 
     @Test
-    fun `the newest commit that names an item is the one that fixed it`() {
+    fun `the newest commit that names an item in its subject is the one that fixed it`() {
         val found = FixCommits.parse(
             log(
-                "ccc3333" to "Fix T-12: cache the path",
-                "bbb2222" to "Tidy up\n\nAlso closes T-7 and T-12.",
+                "ddd4444" to "Keep the tallies in an array\n\nThe mistake fixed in T-12 cannot happen again.",
+                "ccc3333" to "Fix T-12, T-13: cache the path",
+                "bbb2222" to "Fix T-12: cache the path\n\nAlso closes T-7.",
                 "aaa1111" to "Start on T-7",
             )
         )
-        assertEquals(mapOf("T-12" to "ccc3333", "T-7" to "bbb2222"), found)
+        assertEquals(mapOf("T-12" to "ccc3333", "T-13" to "ccc3333", "T-7" to "aaa1111"), found)
+    }
+
+    @Test
+    fun `without one the oldest commit that names an item in its body is the one that fixed it`() {
+        val found = FixCommits.parse(
+            log(
+                "ccc3333" to "Tidy up\n\nAs T-7 did before.",
+                "bbb2222" to "Cache the path\n\nCloses T-7.",
+                "aaa1111" to "Fix T-3: the thing",
+            )
+        )
+        assertEquals(mapOf("T-7" to "bbb2222", "T-3" to "aaa1111"), found)
     }
 
     @Test

@@ -7,8 +7,8 @@ import java.nio.file.Files
 import java.nio.file.Path
 
 /**
- * The commit that fixed an item which does not name one itself: the newest commit of the checkout at
- * [root] whose message names the item's id. It is read from git and never written to the store, so
+ * The commit that fixed an item which does not name one itself: a commit of the checkout at [root] whose
+ * message names the item's id, as [parse] picks it. It is read from git and never written to the store, so
  * closing an item needs no change after the commit that fixed it. A fixedIn stored on the item always wins.
  */
 class FixCommits(private val root: Path, private val git: Git) {
@@ -69,15 +69,22 @@ class FixCommits(private val root: Path, private val git: Git) {
         /** An id of this project: infra/T-12 names an item of another one. */
         private val ID = Regex("(?<![\\w/])T-[1-9][0-9]*\\b")
 
-        /** The commit of each item id named in [log], which is the output of `git log`, newest commit first. */
+        /**
+         * The commit of each item id named in [log], which is the output of `git log`, newest commit first: the newest
+         * one that names it in its subject, as "Fix T-12: ..." does, or else the oldest one that names it in its body,
+         * since a later one only refers back to it.
+         */
         fun parse(log: String): Map<String, String> {
-            val commits = HashMap<String, String>()
+            val bySubject = HashMap<String, String>()
+            val byBody = HashMap<String, String>()
             for (record in log.split('\u001e')) {
                 val hash = record.substringBefore('\u001f', "").trim()
                 if (hash.isEmpty()) continue
-                ID.findAll(record.substringAfter('\u001f')).forEach { commits.putIfAbsent(it.value, hash) }
+                val message = record.substringAfter('\u001f')
+                ID.findAll(message.substringBefore('\n')).forEach { bySubject.putIfAbsent(it.value, hash) }
+                ID.findAll(message.substringAfter('\n', "")).forEach { byBody[it.value] = hash }
             }
-            return commits
+            return byBody + bySubject
         }
     }
 }
