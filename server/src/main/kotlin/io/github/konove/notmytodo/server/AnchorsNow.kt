@@ -9,8 +9,12 @@ import java.nio.file.Path
 
 /** Anchors as the code on disk is now. An agent changes files between calls, so they are read every time. */
 object AnchorsNow {
-    /** [item] with each anchor at the lines its code is at now in [checkout], or lost; as it is without a checkout. */
+    /**
+     * [item] with each anchor at the lines its code is at now in [checkout], or lost; as it is without a checkout.
+     * The anchors of a fixed or closed item stay where they were when it was, since later commits move its code.
+     */
     fun of(item: TodoItem, checkout: Path?): TodoItem {
+        if (item.anchorsFrozen) return if (item.anyLost) item.copy(anchors = item.anchors.map { it.copy(lost = false) }) else item
         if (checkout == null || item.anchors.isEmpty()) return item
         val texts = HashMap<String, String?>()
         val anchors = item.anchors.map { a ->

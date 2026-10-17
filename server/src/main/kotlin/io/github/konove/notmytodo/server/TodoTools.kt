@@ -262,7 +262,8 @@ private class Call(private val scope: Scope, private val workspace: Workspace) {
         val encoded = json.getAsJsonArray("anchors")
         item.anchors.forEachIndexed { index, anchor ->
             if (anchor.isFile) return@forEachIndexed
-            val lines = if (anchor.lost) null else AnchorsNow.read(scope.checkout, anchor.path)?.let(AnchorResolver::lines)
+            // The lines of a frozen anchor may hold other code by now: its stored text is what it was attached to.
+            val lines = if (anchor.lost || item.anchorsFrozen) null else AnchorsNow.read(scope.checkout, anchor.path)?.let(AnchorResolver::lines)
             val code = lines?.takeIf { anchor.endLine <= it.size }?.subList(anchor.startLine - 1, anchor.endLine)?.joinToString("\n")
             encoded[index].asJsonObject.apply {
                 if (!full) {

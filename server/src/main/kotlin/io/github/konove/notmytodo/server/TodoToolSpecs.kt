@@ -16,7 +16,7 @@ object TodoToolSpecs {
                 "All filters must match. Returns a JSON array. Anchored items include, for each of their anchors, the file path and " +
                 "current line range but not the code; use todo_get for the code. To choose what to work on next, take the highest priority first and, " +
                 "within a priority, the least effort. An item with open parts has the highest priority among them, here and wherever it is shown, whatever was set on it. Pass lost=true after moving or rewriting code " +
-                "to find the items that need re-attaching: the files are read from disk again for every answer, so lost is as the code is now. Pass blocked=false to find the items that can be worked on now. Pass compact=true to survey many items, " +
+                "to find the items that need re-attaching: the files are read from disk again for every answer, so lost is as the code is now; a fixed, done or wont_fix item is never lost, as its anchors stay where they were when it was closed. Pass blocked=false to find the items that can be worked on now. Pass compact=true to survey many items, " +
                 "for example to check for a duplicate before todo_create; with anyText one call looks for it under every name it may have. " +
                 "In a compact line, an item that has parts says how many of them are open, fixed and closed as parts, for example \"2 open, 2 fixed, 1 closed\", " +
                 "leaving out a group that counts none: at \"3 fixed, 2 closed\", with none open, the parent itself can be set to fixed, and at \"5 closed\" " +
@@ -29,7 +29,7 @@ object TodoToolSpecs {
                 Param("withoutTags", ParamType.STRING, "Leave out items that have any of these tags, separated by commas or spaces"),
                 Param("text", ParamType.STRING, "Only items whose title or details contain every one of these words, in any case"),
                 Param("compact", ParamType.BOOLEAN, "One line per item with id, title, priority, effort, status, tags and \"at\" (path:lines of each anchor), and for an item that has parts, parts: how many of them are open (open or in_progress), fixed and closed (done or wont_fix), for example \"2 open, 2 fixed, 1 closed\", without a group that counts none; no details"),
-                Param("lost", ParamType.BOOLEAN, "Only items with a lost anchor: the code or file they were attached to can no longer be found. Re-attach them with todo_update"),
+                Param("lost", ParamType.BOOLEAN, "Only items with a lost anchor: the code or file they were attached to can no longer be found. Re-attach them with todo_update. Fixed, done and wont_fix items are never lost"),
                 Param("blocked", ParamType.BOOLEAN, "true for only blocked items, false for only items that are not blocked. An item is blocked while one it is blocked by is not done or wont_fix"),
                 Param("parent", ParamType.STRING, "Only the parts of this item: the items that have it as their parent"),
                 Param("effort", ParamType.STRING, "Only items with this effort: s, m or l"),
@@ -48,6 +48,7 @@ object TodoToolSpecs {
             "Get one TODO item by id (for example T-12) as JSON, with its details, its comments and, for an item anchored to code, " +
                 "its anchors, each with the path, the current line range, lost and code, the code at those lines now. An anchor without lines is on the whole file. " +
                 "An anchor that is lost has no code but text, the code it was attached to, which is the clue to where it belongs now. " +
+                "The anchors of a fixed, done or wont_fix item stay where they were when it was closed and are never lost: they have no code but text, the code they were attached to then. " +
                 "Pass full=true for the text and the lines before and after it as they are stored, for every anchor. " +
                 "toDecide is what the user has to decide, and decisions what the user was asked and answered. " +
                 "Its links to other items are blockedBy, duplicateOf and parent; blocked is true while a blocker is still open, " +

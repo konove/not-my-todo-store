@@ -142,6 +142,36 @@ class TodoToolsTest {
     }
 
     @Test
+    fun `the anchors of a fixed or closed item stay where they were and are never lost`() {
+        val path = write("frozen.txt")
+        tools.create("fixed", null, null, null, path, 2, 2)
+        tools.create("open", null, null, null, path, 3, 3)
+        tools.create("closed", null, null, null, path, 4, 4)
+        tools.update("T-3", null, null, null, null, "wont_fix")
+        // The commit that fixes T-1 takes its code out and moves the rest.
+        write(path, "zero\nzero\none\nthree\nfour\n")
+        val row = JsonParser.parseString(tools.update("T-1", null, null, null, null, "fixed", resolution = "Took it out.")).asJsonObject
+        assertFalse(row.has("lost"))
+        assertEquals("$path:2", row.get("at").asString)
+        fun ids(json: String) = JsonParser.parseString(json).asJsonArray.map { it.asJsonObject.get("id").asString }
+        assertEquals(emptyList<String>(), ids(tools.list(lost = true)))
+
+        val anchor = JsonParser.parseString(tools.get("T-1")).asJsonObject.getAsJsonArray("anchors")[0].asJsonObject
+        assertEquals(setOf("path", "startLine", "endLine", "lost", "text"), anchor.keySet())
+        assertEquals("two", anchor.get("text").asString)
+        // The open item follows its code, and the closed one stays where it was.
+        val rows = JsonParser.parseString(tools.list(compact = true)).asJsonArray.map { it.asJsonObject }
+        assertEquals("$path:4", rows[1].get("at").asString)
+        assertEquals("$path:4", rows[2].get("at").asString)
+        Files.delete(repo.resolve(path))
+        assertEquals(listOf("T-2"), ids(tools.list(lost = true)))
+
+        // Opened again, it is found as the code is now.
+        tools.update("T-1", null, null, null, null, "open")
+        assertEquals(listOf("T-1", "T-2"), ids(tools.list(lost = true)))
+    }
+
+    @Test
     fun `compact list has one short line per item`() {
         val path = write("c.txt")
         tools.create("a", "long details", "p1", "perf", path, 2, 3)
@@ -636,9 +666,10 @@ class TodoToolsTest {
         assertEquals(listOf("decisions"), decided.getAsJsonArray("changed").map { it.asString })
         assertFalse(decided.has("details"))
 
-        // The line T-1 is attached to is taken out of the file.
+        // The line T-1 is attached to is taken out of the file. As it is fixed, it stays where it was.
         write(path, "one\ntwo\nthree\n")
-        assertTrue(JsonParser.parseString(tools.comment("T-1", "gone")).asJsonObject.get("lost").asBoolean)
+        assertFalse(JsonParser.parseString(tools.comment("T-1", "gone")).asJsonObject.has("lost"))
+        assertTrue(JsonParser.parseString(tools.update("T-1", null, null, null, null, "open")).asJsonObject.get("lost").asBoolean)
     }
 
     @Test

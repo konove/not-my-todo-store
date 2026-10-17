@@ -141,6 +141,8 @@ data class TodoItem(
     val anyLost: Boolean get() = anchors.any { it.lost }
     val number: Int get() = ItemId.number(id)
     val isClosed: Boolean get() = status == Status.DONE || status == Status.WONT_FIX
+    /** Fixed or closed: its anchors stay where they were when it was, and are never lost. */
+    val anchorsFrozen: Boolean get() = status == Status.FIXED || isClosed
 
     /** Marked with the [Tags.NEEDS_DECISION] tag: an agent must not fix this until I have decided something. */
     val needsDecision: Boolean get() = Tags.NEEDS_DECISION in tags
