@@ -115,8 +115,8 @@ class TodoTools(val workspace: Workspace) {
         }.toString()
     }
 
-    fun get(id: String, full: Boolean = false, project: String? = null): String =
-        found { workspace.target(id, project) }.let { (scope, bare) -> Call(scope, workspace).get(bare, full) }
+    fun get(id: String, full: Boolean = false, project: String? = null, parts: Boolean = false): String =
+        found { workspace.target(id, project) }.let { (scope, bare) -> Call(scope, workspace).get(bare, full, parts) }
 
     fun create(
         title: String, details: String?, priority: String?, tags: String?,
@@ -249,15 +249,21 @@ private class Call(private val scope: Scope, private val workspace: Workspace) {
         return row
     }
 
-    fun get(id: String, full: Boolean = false): String {
+    /** Item [id] with the code of its anchors; with [parts], its parts as a list shows them, so that one call starts work on a parent. */
+    fun get(id: String, full: Boolean = false, parts: Boolean = false): String {
         val item = asNow(listOf(item(id))).single()
-        fixes(listOf(item))
         val links = links(readable())
+        val children = links.children(item.id)
+        val shownParts = if (parts) asNow(children) else emptyList()
+        fixes(listOf(item) + shownParts)
         val json = encoded(item, links)
         if (links.isBlocked(item)) json.addProperty("blocked", true)
-        links.children(id).takeIf { it.isNotEmpty() }?.let { parts ->
-            json.add("children", JsonArray().also { a -> parts.forEach { a.add(it.id) } })
-            json.addProperty("parts", countsOf(parts))
+        if (children.isNotEmpty()) {
+            json.add(
+                "children",
+                JsonArray().also { a -> if (parts) shownParts.forEach { a.add(summary(it, links)) } else children.forEach { a.add(it.id) } },
+            )
+            json.addProperty("parts", countsOf(children))
         }
         // Written in the order of item.anchors.
         val encoded = json.getAsJsonArray("anchors")

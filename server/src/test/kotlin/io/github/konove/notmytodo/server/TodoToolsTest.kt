@@ -371,6 +371,27 @@ class TodoToolsTest {
     }
 
     @Test
+    fun `get with parts gives each part with its details and its anchors without code`() {
+        val path = write("parts.txt")
+        tools.create("whole", null, null, null, null, null, null)
+        tools.create("first", "do this first", null, null, path, 2, 3, parent = "T-1")
+        tools.create("second", "then this", null, null, null, null, null, blockedBy = "T-2", parent = "T-1")
+        tools.create("elsewhere", null, null, null, null, null, null)
+        // The code of the first part moves down a line.
+        write(path, "zero\n$text")
+        val json = JsonParser.parseString(tools.get("T-1", parts = true)).asJsonObject
+        val parts = json.getAsJsonArray("children").map { it.asJsonObject }
+        assertEquals(listOf("T-2", "T-3"), parts.map { it.get("id").asString })
+        assertEquals(listOf("do this first", "then this"), parts.map { it.get("details").asString })
+        val anchor = parts[0].getAsJsonArray("anchors")[0].asJsonObject
+        assertEquals(setOf("path", "startLine", "endLine", "lost"), anchor.keySet())
+        assertEquals(3, anchor.get("startLine").asInt)
+        assertTrue(parts[1].get("blocked").asBoolean)
+        assertEquals("2 open", json.get("parts").asString)
+        assertFalse(JsonParser.parseString(tools.get("T-4", parts = true)).asJsonObject.has("children"))
+    }
+
+    @Test
     fun `a parent is listed and read with the priority of its open parts`() {
         tools.create("whole", null, "p3", null, null, null, null)
         tools.create("first", null, "p1", null, null, null, null, parent = "T-1")

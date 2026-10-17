@@ -53,13 +53,16 @@ object TodoToolSpecs {
                 "toDecide is what the user has to decide, and decisions what the user was asked and answered. " +
                 "Its links to other items are blockedBy, duplicateOf and parent; blocked is true while a blocker is still open, " +
                 "and children lists the items that have this one as their parent, with parts saying how many of them are open (open or in_progress), fixed and closed (done or wont_fix), " +
-                "for example \"2 open, 2 fixed, 1 closed\", without a group that counts none. A parent is not closed when its parts are: close it yourself.",
+                "for example \"2 open, 2 fixed, 1 closed\", without a group that counts none. A parent is not closed when its parts are: close it yourself. " +
+                "To start work on a parent, pass parts=true: children then holds each part as todo_list shows it, with its details and its anchors without code, " +
+                "instead of a todo_get for each part.",
             listOf(
                 Param("id", ParamType.STRING, "Item id, for example T-12", required = true),
                 Param("full", ParamType.BOOLEAN, "true to get, for every anchor, the stored text and the lines before and after it as well. Leave it out: code has the same lines as they are now"),
+                Param("parts", ParamType.BOOLEAN, "true to get, in children, each part of the item as todo_list shows it, with its details, instead of only its id"),
                 Param("project", ParamType.STRING, PROJECT),
             ),
-        ) { a -> tools.get(a.required("id"), a.bool("full"), a.string("project")) },
+        ) { a -> tools.get(a.required("id"), a.bool("full"), a.string("project"), a.bool("parts")) },
         Tool(
             "todo_create",
             "Create a TODO item for the user to triage. Give path and startLine to attach it to code, or path alone to " +
