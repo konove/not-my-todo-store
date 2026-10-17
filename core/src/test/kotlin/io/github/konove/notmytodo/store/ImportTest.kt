@@ -86,4 +86,37 @@ class ImportTest {
         Import.run(store, "demo", file, adjust = { it.copy(title = it.title.uppercase()) })
         assertEquals(listOf("TWO", "FIVE"), store.items("demo").items.map { it.title })
     }
+
+    @Test
+    fun `with renumber the items get the project's next ids, and their links follow them`() {
+        store.items("demo").create(Draft("one"))
+        store.items("demo").create(Draft("two"))
+        assertEquals(ImportResult.Imported(2), Import.run(store, "demo", file, renumber = true))
+        val items = store.items("demo")
+        assertEquals(listOf("T-1", "T-2", "T-3", "T-4"), items.items.map { it.id })
+        assertEquals("two", items.find("T-3")!!.title)
+        assertEquals(listOf("T-3"), items.find("T-4")!!.blockedBy)
+        assertEquals("T-5", items.create(Draft("next")).id)
+        assertEquals(file.toAbsolutePath().normalize().toString(), store.project("demo")!!.importedFrom!!.path)
+    }
+
+    @Test
+    fun `with renumber a link to an id the file does not hold is kept as it is`() {
+        Files.writeString(file, """{"version":2,"nextId":3,"items":[{"id":"T-1","title":"one","blockedBy":["T-40"],"parent":"T-2"},{"id":"T-2","title":"two"}]}""")
+        store.items("demo").create(Draft("there"))
+        Import.run(store, "demo", file, renumber = true)
+        val one = store.items("demo").find("T-2")!!
+        assertEquals("one", one.title)
+        assertEquals(listOf("T-40"), one.blockedBy)
+        assertEquals("T-3", one.parent)
+    }
+
+    @Test
+    fun `with renumber the held statuses and adjust apply by the file's own ids`() {
+        store.items("demo").create(Draft("one"))
+        Import.run(store, "demo", file, mapOf("T-2" to Status.DONE), adjust = { it.copy(title = it.id + " " + it.title) }, renumber = true)
+        val moved = store.items("demo").find("T-2")!!
+        assertEquals(Status.DONE, moved.status)
+        assertEquals("T-2 two", moved.title)
+    }
 }
